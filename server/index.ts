@@ -5,6 +5,7 @@ import { FrameStream, type FrameEvent } from './parser.js';
 import { ToolsRegistry } from './tools.js';
 import { ArtifactsWriter } from './artifacts.js';
 import { Validator } from './validator.js';
+import { attemptRepair } from './repair.js';
 import { IdempotencyCache } from './idempotency.js';
 
 const app = Fastify({ logger: true });
@@ -15,16 +16,31 @@ app.post('/v1/stream', async (request, reply) => {
   reply.headers(sseHeaders());
   reply.raw.writeHead(200);
   const queue = new EventQueue(reply, 128);
+  let isClosed = false;
   const hb = setInterval(() => {
     void queue.send('ping', {});
   }, 15000);
-  request.raw.on('close', () => clearInterval(hb));
+  request.raw.on('close', () => {
+    isClosed = true;
+    clearInterval(hb);
+  });
 
   const artifacts = new ArtifactsWriter('artifacts');
   artifacts.writePrompt({ request: body, model: CONFIG.MODEL_ID, seed: CONFIG.SEED, temperature: CONFIG.TEMPERATURE });
 
   const start = Date.now();
   let toolLatencyMs: number | undefined;
+  let degraded = false;
+  let frameTimer: NodeJS.Timeout | null = null;
+
+  function resetFrameTimer() {
+    if (frameTimer) clearTimeout(frameTimer);
+    frameTimer = setTimeout(async () => {
+      if (isClosed) return;
+      await queue.send('error', { code: 'frame_timeout', message: 'No frame activity within FRAME_TIMEOUT_MS' });
+      await queue.close();
+    }, CONFIG.FRAME_TIMEOUT_MS);
+  }
 
   const validator = new Validator();
 
@@ -34,41 +50,49 @@ app.post('/v1/stream', async (request, reply) => {
         validator.onJsonBegin(e.id, e.schema);
         void queue.send(e.type, { id: e.id, schema: e.schema });
         artifacts.appendFrame(e.type, e);
+        resetFrameTimer();
         break;
       case 'json.delta':
         validator.onJsonDelta(e.id, e.chunk);
         void queue.send(e.type, { id: e.id, chunk: e.chunk });
         artifacts.appendFrame(e.type, e);
+        resetFrameTimer();
         break;
       case 'json.end':
         validator.onJsonEnd(e.id);
         void queue.send(e.type, { id: e.id, length: e.length });
         artifacts.appendFrame(e.type, e);
+        resetFrameTimer();
         break;
       case 'result.begin':
         validator.onResultBegin(e.id, e.schema);
         void queue.send(e.type, { id: e.id, schema: e.schema });
         artifacts.appendFrame(e.type, e);
+        resetFrameTimer();
         break;
       case 'result.delta':
         validator.onResultDelta(e.id, e.chunk);
         void queue.send(e.type, { id: e.id, chunk: e.chunk });
         artifacts.appendFrame(e.type, e);
+        resetFrameTimer();
         break;
       case 'result.end': {
         validator.onResultEnd(e.id);
         void queue.send(e.type, { id: e.id, length: e.length });
         artifacts.appendFrame(e.type, e);
+        resetFrameTimer();
         break;
       }
       case 'tool.call': {
         void queue.send('tool.call', { id: e.id, name: e.name, args: e.args });
         artifacts.appendFrame('tool.call', { id: e.id, name: e.name, args: e.args });
+        resetFrameTimer();
         break;
       }
       case 'tool.result': {
         void queue.send('tool.result', { id: e.id, name: e.name, result: e.result });
         artifacts.appendFrame('tool.result', { id: e.id, name: e.name, result: e.result });
+        resetFrameTimer();
         break;
       }
       case 'text.delta': {
@@ -91,11 +115,13 @@ app.post('/v1/stream', async (request, reply) => {
     await delay(10);
     parser.ingest('⟦END_OBJECT id=O1⟧');
 
+    if (isClosed) return;
+    resetFrameTimer();
     if (mode === 'retry_test') {
       // Induce a single failure then retry via execTool
       await delay(10);
       parser.ingest('⟦BEGIN_TOOL_CALL id=T1 name=test.failOnce⟧');
-      const args = { key: 'k1' };
+      const args = { key: (body && (body as any).testKey) || 'k1' };
       parser.ingest(JSON.stringify(args));
       parser.ingest('⟦END_TOOL_CALL id=T1⟧');
       let result: any;
@@ -118,7 +144,9 @@ app.post('/v1/stream', async (request, reply) => {
       parser.ingest('⟦END_TOOL_CALL id=T1⟧');
       let result: any;
       try {
-        result = await execTool('test.sleep', args, request.headers['idempotency-key'] as string | undefined);
+        // Call without retries to ensure single-timeout within FRAME_TIMEOUT_MS
+        const fn = ToolsRegistry['test.sleep'];
+        result = await withTimeout(fn(args, request.headers['idempotency-key'] as string | undefined), CONFIG.TOOL_TIMEOUT_MS, 'tool_timeout:test.sleep');
       } catch (err) {
         result = { error: String(err) };
       }
@@ -140,6 +168,45 @@ app.post('/v1/stream', async (request, reply) => {
       }
       parser.ingest(suffix);
       parser.ingest('⟦END_RESULT id=R1⟧');
+    } else if (mode === 'repair_test') {
+      // Emit an invalid result (missing required 'answer'), then repair
+      await delay(10);
+      parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
+      parser.ingest(JSON.stringify({ citations: [] }));
+      parser.ingest('⟦END_RESULT id=R1⟧');
+      // After validator processes, check for invalid and emit repaired
+      const bad = validator.notes.find((n) => n.kind === 'result' && n.schema === 'AssistantReply' && !n.ok);
+      if (bad) {
+        degraded = true;
+        const repaired = attemptRepair(bad.errors);
+        await delay(10);
+        parser.ingest('⟦BEGIN_RESULT id=R2 schema=AssistantReply⟧');
+        parser.ingest(JSON.stringify(repaired));
+        parser.ingest('⟦END_RESULT id=R2⟧');
+      }
+    } else if (mode === 'interrupt_test') {
+      // Emit a long-running tool, but client will abort shortly after tool.call
+      await delay(10);
+      parser.ingest('⟦BEGIN_TOOL_CALL id=T1 name=test.sleep⟧');
+      const args = { ms: 5000 };
+      parser.ingest(JSON.stringify(args));
+      parser.ingest('⟦END_TOOL_CALL id=T1⟧');
+      if (isClosed) return; // client disconnected
+      let result: any;
+      try {
+        result = await execTool('test.sleep', args, request.headers['idempotency-key'] as string | undefined);
+      } catch (err) {
+        result = { error: String(err) };
+      }
+      emit({ type: 'tool.result', id: 'T1', name: 'test.sleep', result });
+      if (isClosed) return;
+      await delay(10);
+      parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
+      parser.ingest(JSON.stringify({ answer: 'Interrupt test completed', citations: [] }));
+      parser.ingest('⟦END_RESULT id=R1⟧');
+    } else if (mode === 'silence_test') {
+      // Do nothing further; expect frame timeout to trigger
+      await delay(CONFIG.FRAME_TIMEOUT_MS + 200);
     } else {
       // Default happy path: places.search then bookings.create
       await delay(10);
@@ -148,6 +215,7 @@ app.post('/v1/stream', async (request, reply) => {
       parser.ingest('⟦END_TOOL_CALL id=T1⟧');
 
       // Handle tool execution synchronously after tool.call is emitted
+      if (isClosed) return;
       const tStart = Date.now();
       const args = { query: 'pizza', radius_km: 3 };
       let result: any = [];
@@ -161,16 +229,19 @@ app.post('/v1/stream', async (request, reply) => {
 
       // Second tool call: bookings.create (choose first open place if any)
       await delay(10);
+      if (isClosed) return;
       const open = Array.isArray(result) ? (result as any[]).find((r: any) => r.open_now) : null;
       if (open) {
         parser.ingest('⟦BEGIN_TOOL_CALL id=T2 name=bookings.create⟧');
         const bookingArgs = { place_id: open.id, time: '19:00', party_size: 2 };
         parser.ingest(JSON.stringify(bookingArgs));
         parser.ingest('⟦END_TOOL_CALL id=T2⟧');
+        if (isClosed) return;
         try {
           const bookingRes = await execTool('bookings.create', bookingArgs, request.headers['idempotency-key'] as string | undefined);
           emit({ type: 'tool.result', id: 'T2', name: 'bookings.create', result: bookingRes });
           await delay(10);
+          if (isClosed) return;
           parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
           parser.ingest(
             JSON.stringify({
@@ -182,6 +253,7 @@ app.post('/v1/stream', async (request, reply) => {
         } catch (err) {
           // Booking failed: still return found places
           await delay(10);
+          if (isClosed) return;
           parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
           parser.ingest(
             JSON.stringify({
@@ -194,6 +266,7 @@ app.post('/v1/stream', async (request, reply) => {
       } else {
         // No open place, just return found places
         await delay(10);
+        if (isClosed) return;
         parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
         parser.ingest(JSON.stringify({ answer: `Found ${(result as any[]).length ?? 0} places (none open).`, citations: [] }));
         parser.ingest('⟦END_RESULT id=R1⟧');
@@ -201,7 +274,7 @@ app.post('/v1/stream', async (request, reply) => {
     }
 
     // Done
-    void queue.send('done', {});
+    if (!isClosed) void queue.send('done', {});
     artifacts.appendFrame('done', {});
     const okJson = validator.notes.filter((n) => n.kind === 'json' && n.ok).length;
     const badJson = validator.notes.filter((n) => n.kind === 'json' && !n.ok).length;
@@ -213,6 +286,7 @@ app.post('/v1/stream', async (request, reply) => {
       toolLatencyMs,
       model: CONFIG.MODEL_ID,
       validation: { okJson, badJson, okResult, badResult },
+      degraded,
     });
     await queue.close();
   };
