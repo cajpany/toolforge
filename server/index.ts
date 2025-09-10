@@ -115,8 +115,8 @@ app.post('/v1/stream', async (request, reply) => {
   const mode = (body && (body as any).mode) as string | undefined;
 
   const emitTokens = async () => {
-    const isProviderMode = mode === 'provider_demo' || mode === 'provider_tools_demo' || mode === 'provider_fallback_test';
-    if (!isProviderMode) {
+    const skipPrelude = mode === 'provider_demo' || mode === 'provider_tools_demo' || mode === 'provider_fallback_test' || mode === 'complex_schema_test';
+    if (!skipPrelude) {
       // 1) Action object (not strictly needed for tool, but demonstrates json.* frames)
       parser.ingest('⟦BEGIN_OBJECT id=O1 schema=Action⟧');
       await delay(10);
@@ -283,6 +283,17 @@ app.post('/v1/stream', async (request, reply) => {
     } else if (mode === 'provider_fallback_test') {
       // Intentionally do not emit any result or tool frames; fallback will trigger
       await delay(10);
+    } else if (mode === 'complex_schema_test') {
+      // Emit a ComplexDemo object and a minimal AssistantReply
+      await delay(10);
+      parser.ingest('⟦BEGIN_OBJECT id=OC1 schema=ComplexDemo⟧');
+      parser.ingest(JSON.stringify({ mode: 'search', targets: [{ kind: 'place', id: 'p1' }], notes: ['n1'] }));
+      parser.ingest('⟦END_OBJECT id=OC1⟧');
+      if (isClosed) return;
+      await delay(10);
+      parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
+      parser.ingest(JSON.stringify({ answer: 'ok', citations: [] }));
+      parser.ingest('⟦END_RESULT id=R1⟧');
     } else {
       // Default happy path: places.search then bookings.create
       await delay(10);

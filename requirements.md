@@ -13,7 +13,7 @@ Project snapshot (decisions locked)
 - Repair policy: One repair retry; on failure emit minimal valid object with `diagnostics.error = "schema_repair_failed"`, keep stream going; mark frame as degraded in logs
 - Tools: Demo mocks (e.g., `places.search`, `bookings.create`) with deterministic fixture-backed results; optional Idempotency-Key pass-through
 - Determinism: temperature=0.2, seed=42, capped max_tokens in demo profile
-- Env vars: `GROQ_API_KEY`, `GROQ_BASE_URL`, `MODEL_ID=gpt-oss-20b`, `REPAIR_RETRIES=1`, `FRAME_TIMEOUT_MS=15000`, `TOOL_TIMEOUT_MS=8000`
+- Env vars: `GROQ_API_KEY`, `GROQ_BASE_URL`, `MODEL_ID=gpt-oss-20b`, `REPAIR_RETRIES=1`, `FRAME_TIMEOUT_MS=15000`, `TOOL_TIMEOUT_MS=8000`, optional `PROVIDER_EXTRA_HEADERS`
 
 Success criteria (aligned to judging)
 - Application of gpt-oss: Deterministic framed streaming, mid-stream tool calling, JSON guarantees, artifacts saved
@@ -225,43 +225,29 @@ D2 — Mid-stream tools, timeouts, backpressure, 30 tests [DONE]
 
 D3 — Groq provider integration, repair loop, complex schemas, 80+ tests, TS SDK [IN PROGRESS]
 - Groq provider (OpenAI-compatible)
-  - Client: stream Chat Completions from `GROQ_BASE_URL` with `GROQ_API_KEY`
-  - Deterministic config: `MODEL_ID`, `temperature=0.2`, `seed=42`, `max_tokens<=384`
-  - Use `prompts/system.txt` to enforce sentinels contract
-  - Server `mode=provider_demo`: proxy provider deltas through parser; send frames
-  - Stretch: mid-stream pause on `tool.call`, run tool, resume with appended messages
+  - Client: stream Chat Completions from `GROQ_BASE_URL` with `GROQ_API_KEY` [DONE]
+  - Deterministic config: `MODEL_ID`, `temperature=0.2`, `seed=42`, `max_tokens<=384` [DONE]
+  - Use `prompts/system.txt` to enforce sentinels contract (with explicit examples) [DONE]
+  - Server `mode=provider_demo`: proxy provider deltas through parser; send frames [DONE]
+  - Mid-stream pause on `tool.call`, run tool, resume with appended messages (`provider_tools_demo`) [DONE]
+  - Optional extra headers for providers via `PROVIDER_EXTRA_HEADERS` [DONE]
+  - Provider prelude removed: provider must emit all frames (no local `Action` seed) [DONE]
 - Repair loop
-  - Single retry with low temperature; minimal edit constraints
-  - On failure: emit minimal valid object with diagnostics block and continue stream
-    ```json
-    {
-      "answer": "",
-      "citations": [],
-      "diagnostics": {
-        "error": "schema_repair_failed",
-        "last_validator_errors": [
-          {"path":".field","message":"expected string"}
-        ]
-      }
-    }
-    ```
-  - Mark the frame as degraded in `artifacts/frames.ndjson`
+  - Single repair attempt with minimal edit constraints; on failure, emit minimal valid object with diagnostics and continue stream [DONE]
+  - Mark the frame as degraded in artifacts/metrics [DONE]
+- Provider soft fallback
+  - If provider emits no `result.*` frames, server emits `AssistantReply` with `diagnostics.error="provider_no_result"` and sets `metrics.degraded=true` [DONE]
+  - `mode=provider_fallback_test` added for deterministic verification [DONE]
 - Complex schemas
-  - Enums, unions, nested arrays; late required keys
+  - Enums, unions, nested arrays; late required keys [IN PROGRESS]
 - TypeScript SDK (clients/ts)
-  - `startStream({ onToolCall, onJSON, onResult })`
-  - Backpressure hooks: `pause()`, `resume()`
-  - Timeouts: per tool, per request
-  - Example app + docs
-  - SDK callback types
-    ```ts
-    export type OnToolCall = (t: { id: string; name: string; args: unknown }) => Promise<unknown>;
-    export type OnJSON     = (j: { id: string; delta?: string; end?: boolean }) => void;
-    export type OnResult   = (r: { id: string; delta?: string; end?: boolean }) => void;
-    ```
-- Conformance (to 80+)
-  - Security: depth/size limits enforced
-  - Determinism with fixed seed across runs
+  - `startStream({ onToolCall, onJSON, onResult, onError, onDone, onPing })` [DONE]
+  - Backpressure hooks: `pause()`, `resume()`; `isClosed()` handle [DONE]
+  - Example app + docs [IN PROGRESS]
+- Conformance (towards 80+)
+  - Added provider fallback test; current suite: 9/9 passing locally [IN PROGRESS]
+  - Security: depth/size limits enforced [IN PROGRESS]
+  - Determinism with fixed seed across runs [IN PROGRESS]
 
 D4 — 100+ tests, demo app, artifacts, docs [TODO]
 - Conformance to 100+ with matrix output
@@ -312,3 +298,4 @@ Changelog
 - 2025-09-10: Created `requirements.md` and initialized phase-wise plan.
 - 2025-09-10: Upgraded spec with sentinel grammar, SSE schema + heartbeat, determinism/backpressure invariants, explicit fallback object, security limits, enum/union schema example, metrics artifact, EBNF, SDK callback types, and phase DoD.
 - 2025-09-10: D2 implemented in server + tests (timeouts, retries, backpressure, interruption, repair, idempotency). Conformance 8/8 passing. Added D3 Groq provider plan.
+ - 2025-09-10: D3 progress — provider client + modes (`provider_demo`, `provider_tools_demo`), hardened `system.txt`, provider extra headers, provider soft fallback with degraded metrics, TS SDK callbacks, conformance extended (9/9). Provider prelude removed to improve compliance.

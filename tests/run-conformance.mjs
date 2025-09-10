@@ -65,6 +65,20 @@ async function case_basic_two_tools() {
   return { pass: true };
 }
 
+async function case_complex_schema_test() {
+  const events = await readSSE('/v1/stream', { mode: 'complex_schema_test' });
+  const order = events.map((e) => e.event);
+  const hasJson = order.includes('json.begin') && order.includes('json.end');
+  const hasResult = order.includes('result.begin') && order.includes('result.end');
+  if (!hasJson) throw new Error('Expected ComplexDemo json.begin/json.end');
+  if (!hasResult) throw new Error('Expected AssistantReply result frames');
+  // Validate that the json.begin announced ComplexDemo
+  const begins = get(events, 'json.begin');
+  const first = begins[0] || {};
+  if (first.schema !== 'ComplexDemo') throw new Error('Expected schema=ComplexDemo');
+  return { pass: true };
+}
+
 async function case_retry_test() {
   const events = await readSSE('/v1/stream', { mode: 'retry_test', testKey: 'rt-unique-1' });
   const calls = get(events, 'tool.call');
@@ -248,6 +262,7 @@ async function main() {
     { name: 'idempotency_test', fn: case_idempotency_test },
     { name: 'silence_timeout_test', fn: case_silence_timeout_test },
     { name: 'provider_fallback_test', fn: case_provider_fallback_test },
+    { name: 'complex_schema_test', fn: case_complex_schema_test },
   ];
   let pass = 0;
   for (const c of cases) {
