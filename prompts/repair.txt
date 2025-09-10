@@ -1,0 +1,5 @@
+Your previous JSON failed schema validation: <ERRORS>.
+Emit a corrected object by minimally editing the last version. DO NOT add new keys unless required by schema.
+Re-emit ONLY the corrected object within the same frame (no text outside). Use \u27E6/\u27E7 escapes if sentinels appear.
+If you cannot repair, emit a syntactically valid minimal object matching the `AssistantReply` shape with an empty answer and a diagnostics block:
+{"answer":"","citations":[],"diagnostics":{"error":"schema_repair_failed","last_validator_errors":<ERRORS>}}

@@ -1,0 +1,34 @@
+{
+  "name": "toolforge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch server/index.ts",
+    "start": "node --enable-source-maps dist/server/index.js",
+    "build": "tsc -p tsconfig.json",
+    "demo": "tsx demo/cli.ts",
+    "lint": "eslint . --ext .ts",
+    "format": "prettier -w .",
+    "test": "vitest run",
+    "test:conformance": "node tests/run-conformance.mjs || echo \"Conformance harness TBD\""
+  },
+  "dependencies": {
+    "fastify": "^5.6.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.35.0",
+    "@types/node": "^24.3.1",
+    "eslint": "^9.35.0",
+    "globals": "^15.12.0",
+    "prettier": "^3.3.3",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.2",
+    "typescript-eslint": "^8.43.0",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=24.3.0 <25"
+  }
+}
