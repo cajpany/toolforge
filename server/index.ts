@@ -115,7 +115,19 @@ app.post('/v1/stream', async (request, reply) => {
   const mode = (body && (body as any).mode) as string | undefined;
 
   const emitTokens = async () => {
-    const skipPrelude = mode === 'provider_demo' || mode === 'provider_tools_demo' || mode === 'provider_fallback_test' || mode === 'complex_schema_test';
+    const skipPrelude = (
+      mode === 'provider_demo' ||
+      mode === 'provider_tools_demo' ||
+      mode === 'provider_fallback_test' ||
+      mode === 'complex_schema_test' ||
+      mode === 'deep_combo_test' ||
+      mode === 'complex_late_keys_test' ||
+      mode === 'deep_combo_no_flags_test' ||
+      mode === 'union_order_test' ||
+      mode === 'sentinel_escape_test' ||
+      mode === 'deep_combo_many_items_test' ||
+      mode === 'complex_enum_validation_test'
+    );
     if (!skipPrelude) {
       // 1) Action object (not strictly needed for tool, but demonstrates json.* frames)
       parser.ingest('⟦BEGIN_OBJECT id=O1 schema=Action⟧');
@@ -144,6 +156,92 @@ app.post('/v1/stream', async (request, reply) => {
       await delay(10);
       parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
       parser.ingest(JSON.stringify({ answer: `Retry attempts ${(result?.attempt) ?? 0}`, citations: [] }));
+      parser.ingest('⟦END_RESULT id=R1⟧');
+    } else if (mode === 'complex_late_keys_test') {
+      // ComplexDemo with late keys appearing across deltas
+      await delay(5);
+      parser.ingest('⟦BEGIN_OBJECT id=OC2 schema=ComplexDemo⟧');
+      parser.ingest('{"targets":[');
+      await delay(5);
+      parser.ingest('{"kind":"time","at":"2025-10-01T12:00:00Z"}],');
+      await delay(5);
+      parser.ingest('"mode":"search"');
+      await delay(5);
+      parser.ingest(',"notes":["late-mode"]}');
+      parser.ingest('⟦END_OBJECT id=OC2⟧');
+      if (isClosed) return;
+      await delay(5);
+      parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
+      parser.ingest(JSON.stringify({ answer: 'late keys ok', citations: [] }));
+      parser.ingest('⟦END_RESULT id=R1⟧');
+    } else if (mode === 'deep_combo_no_flags_test') {
+      // DeepCombo without flags field (should default)
+      await delay(5);
+      parser.ingest('⟦BEGIN_OBJECT id=OD2 schema=DeepCombo⟧');
+      parser.ingest('{"meta":{"version":1,"source":"cli"},"items":[{"kind":"A","id":"a2","weight":1}]}');
+      parser.ingest('⟦END_OBJECT id=OD2⟧');
+      if (isClosed) return;
+      await delay(5);
+      parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
+      parser.ingest(JSON.stringify({ answer: 'no flags ok', citations: [] }));
+      parser.ingest('⟦END_RESULT id=R1⟧');
+    } else if (mode === 'union_order_test') {
+      // DeepCombo with union members in reverse order C,B,A
+      await delay(5);
+      parser.ingest('⟦BEGIN_OBJECT id=OD3 schema=DeepCombo⟧');
+      parser.ingest('{"meta":{"version":1,"source":"cli"},"items":[');
+      parser.ingest('{"kind":"C","when":"2025-09-10T00:00:00Z","priority":"medium"},');
+      parser.ingest('{"kind":"B","name":"b2","tags":[]},');
+      parser.ingest('{"kind":"A","id":"a3","weight":0}]}');
+      parser.ingest('⟦END_OBJECT id=OD3⟧');
+      if (isClosed) return;
+      await delay(5);
+      parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
+      parser.ingest(JSON.stringify({ answer: 'union order ok', citations: [] }));
+      parser.ingest('⟦END_RESULT id=R1⟧');
+    } else if (mode === 'sentinel_escape_test') {
+      // DeepCombo with strings containing sentinel escapes
+      await delay(5);
+      parser.ingest('⟦BEGIN_OBJECT id=OD4 schema=DeepCombo⟧');
+      parser.ingest('{"meta":{"version":1,"source":"cli"},"items":[');
+      parser.ingest('{"kind":"B","name":"b-escape","tags":["foo \\u27E6 marker \\u27E7","bar"]}],');
+      parser.ingest('"flags":["x"]}');
+      parser.ingest('⟦END_OBJECT id=OD4⟧');
+      if (isClosed) return;
+      await delay(5);
+      parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
+      parser.ingest(JSON.stringify({ answer: 'sentinels ok', citations: [] }));
+      parser.ingest('⟦END_RESULT id=R1⟧');
+    } else if (mode === 'deep_combo_many_items_test') {
+      // DeepCombo with many items to produce multiple deltas
+      await delay(5);
+      parser.ingest('⟦BEGIN_OBJECT id=OD5 schema=DeepCombo⟧');
+      parser.ingest('{"meta":{"version":1,"source":"cli"},"items":[');
+      for (let i = 0; i < 12; i++) {
+        const frag = i % 3 === 0
+          ? `{"kind":"A","id":"a${i}","weight":${i}}`
+          : i % 3 === 1
+          ? `{"kind":"B","name":"b${i}","tags":[]}`
+          : `{"kind":"C","when":"2025-09-10T00:00:00Z","priority":"low"}`;
+        parser.ingest(frag + (i < 11 ? ',' : '')); await delay(2);
+      }
+      parser.ingest('],"flags":[]}');
+      parser.ingest('⟦END_OBJECT id=OD5⟧');
+      if (isClosed) return;
+      await delay(5);
+      parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
+      parser.ingest(JSON.stringify({ answer: 'many items ok', citations: [] }));
+      parser.ingest('⟦END_RESULT id=R1⟧');
+    } else if (mode === 'complex_enum_validation_test') {
+      // ComplexDemo with mode=book and mixed targets
+      await delay(5);
+      parser.ingest('⟦BEGIN_OBJECT id=OC3 schema=ComplexDemo⟧');
+      parser.ingest('{"mode":"book","targets":[{"kind":"place","id":"p2"},{"kind":"time","at":"2025-10-01T19:00:00Z"}],"notes":[]}');
+      parser.ingest('⟦END_OBJECT id=OC3⟧');
+      if (isClosed) return;
+      await delay(5);
+      parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
+      parser.ingest(JSON.stringify({ answer: 'enum ok', citations: [] }));
       parser.ingest('⟦END_RESULT id=R1⟧');
     } else if (mode === 'timeout_test') {
       // Sleep longer than timeout to trigger timeout handling
@@ -293,6 +391,32 @@ app.post('/v1/stream', async (request, reply) => {
       await delay(10);
       parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
       parser.ingest(JSON.stringify({ answer: 'ok', citations: [] }));
+      parser.ingest('⟦END_RESULT id=R1⟧');
+    } else if (mode === 'deep_combo_test') {
+      // Emit DeepCombo with union/enum and late-required keys across deltas
+      await delay(5);
+      parser.ingest('⟦BEGIN_OBJECT id=OD1 schema=DeepCombo⟧');
+      // meta.version first
+      parser.ingest('{"meta":{"version":1');
+      await delay(5);
+      // late key: meta.source arrives later
+      parser.ingest(',"source":"cli"},');
+      await delay(5);
+      // start items array, push different union members across deltas
+      parser.ingest('"items":[');
+      parser.ingest('{"kind":"A","id":"a1","weight":3},');
+      await delay(3);
+      parser.ingest('{"kind":"B","name":"b1","tags":["t1","t2"]},');
+      await delay(3);
+      parser.ingest('{"kind":"C","when":"2025-09-10T00:00:00Z","priority":"high"}]');
+      await delay(3);
+      // flags optional
+      parser.ingest(',"flags":["x","z"]}');
+      parser.ingest('⟦END_OBJECT id=OD1⟧');
+      if (isClosed) return;
+      await delay(10);
+      parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
+      parser.ingest(JSON.stringify({ answer: 'deep combo ok', citations: [] }));
       parser.ingest('⟦END_RESULT id=R1⟧');
     } else {
       // Default happy path: places.search then bookings.create

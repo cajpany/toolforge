@@ -29,7 +29,50 @@ async function readSSE(path, body) {
         else if (line.startsWith('data: ')) data += line.slice(6);
       }
 
+async function case_complex_late_keys_test() {
+  const text = get(events, 'json.delta').map((d) => d.chunk || '').join('');
+  if (text.includes('"flags"')) throw new Error('Flags should be optional/defaulted and may be absent in JSON');
+  return { pass: true };
+}
 
+async function case_union_order_test() {
+  const events = await readSSE('/v1/stream', { mode: 'union_order_test' });
+  const begins = get(events, 'json.begin');
+  if (begins[0]?.schema !== 'DeepCombo') throw new Error('Expected schema=DeepCombo');
+  const text = get(events, 'json.delta').map((d) => d.chunk || '').join('');
+  if (!(text.indexOf('"kind":"C"') < text.indexOf('"kind":"B"') && text.indexOf('"kind":"B"') < text.indexOf('"kind":"A"'))) {
+    throw new Error('Expected union order C,B,A in items');
+  }
+  return { pass: true };
+}
+
+async function case_sentinel_escape_test() {
+  const events = await readSSE('/v1/stream', { mode: 'sentinel_escape_test' });
+  const text = get(events, 'json.delta').map((d) => d.chunk || '').join('');
+  if (!text.includes('\\u27E6') || !text.includes('\\u27E7')) throw new Error('Expected escaped sentinel sequences');
+  return { pass: true };
+}
+
+async function case_deep_combo_many_items_test() {
+  const events = await readSSE('/v1/stream', { mode: 'deep_combo_many_items_test' });
+  const text = get(events, 'json.delta').map((d) => d.chunk || '').join('');
+  // Expect at least 12 items produced
+  let countA = (text.match(/"kind":"A"/g) || []).length;
+  let countB = (text.match(/"kind":"B"/g) || []).length;
+  let countC = (text.match(/"kind":"C"/g) || []).length;
+  if (countA + countB + countC < 12) throw new Error('Expected 12 union items');
+  return { pass: true };
+}
+
+async function case_complex_enum_validation_test() {
+  const events = await readSSE('/v1/stream', { mode: 'complex_enum_validation_test' });
+  const begins = get(events, 'json.begin');
+  if (begins[0]?.schema !== 'ComplexDemo') throw new Error('Expected schema=ComplexDemo');
+  const text = get(events, 'json.delta').map((d) => d.chunk || '').join('');
+  if (!text.includes('"mode":"book"')) throw new Error('Expected mode=book');
+  if (!text.includes('"kind":"place"') || !text.includes('"kind":"time"')) throw new Error('Expected mixed targets present');
+  return { pass: true };
+}
       try {
         const parsed = data ? JSON.parse(data) : {};
         events.push({ event, data: parsed });
@@ -76,6 +119,86 @@ async function case_complex_schema_test() {
   const begins = get(events, 'json.begin');
   const first = begins[0] || {};
   if (first.schema !== 'ComplexDemo') throw new Error('Expected schema=ComplexDemo');
+  return { pass: true };
+}
+
+async function case_deep_combo_test() {
+  const events = await readSSE('/v1/stream', { mode: 'deep_combo_test' });
+  const order = events.map((e) => e.event);
+  const hasJson = order.includes('json.begin') && order.includes('json.end');
+  const hasResult = order.includes('result.begin') && order.includes('result.end');
+  if (!hasJson) throw new Error('Expected DeepCombo json.begin/json.end');
+  if (!hasResult) throw new Error('Expected AssistantReply result frames');
+  const begins = get(events, 'json.begin');
+  const first = begins[0] || {};
+  if (first.schema !== 'DeepCombo') throw new Error('Expected schema=DeepCombo');
+  const deltas = get(events, 'json.delta');
+  const text = deltas.map((d) => d.chunk || '').join('');
+  if (!text.includes('"kind":"A"') || !text.includes('"kind":"B"') || !text.includes('"kind":"C"')) {
+    throw new Error('Expected union members A, B, C present');
+  }
+  if (!text.includes('"flags"')) {
+    throw new Error('Expected flags array present');
+  }
+  return { pass: true };
+}
+
+async function case_complex_late_keys_test() {
+  const events = await readSSE('/v1/stream', { mode: 'complex_late_keys_test' });
+  const order = events.map((e) => e.event);
+  if (!order.includes('json.begin') || !order.includes('json.end')) throw new Error('Expected ComplexDemo json frames');
+  const begins = get(events, 'json.begin');
+  if (begins[0]?.schema !== 'ComplexDemo') throw new Error('Expected schema=ComplexDemo');
+  const text = get(events, 'json.delta').map((d) => d.chunk || '').join('');
+  if (!text.includes('"mode":"search"')) throw new Error('Expected late key mode');
+  return { pass: true };
+}
+
+async function case_deep_combo_no_flags_test() {
+  const events = await readSSE('/v1/stream', { mode: 'deep_combo_no_flags_test' });
+  const begins = get(events, 'json.begin');
+  if (begins[0]?.schema !== 'DeepCombo') throw new Error('Expected schema=DeepCombo');
+  const text = get(events, 'json.delta').map((d) => d.chunk || '').join('');
+  if (text.includes('"flags"')) throw new Error('Flags should be optional/defaulted and may be absent in JSON');
+  return { pass: true };
+}
+
+async function case_union_order_test() {
+  const events = await readSSE('/v1/stream', { mode: 'union_order_test' });
+  const begins = get(events, 'json.begin');
+  if (begins[0]?.schema !== 'DeepCombo') throw new Error('Expected schema=DeepCombo');
+  const text = get(events, 'json.delta').map((d) => d.chunk || '').join('');
+  if (!(text.indexOf('"kind":"C"') < text.indexOf('"kind":"B"') && text.indexOf('"kind":"B"') < text.indexOf('"kind":"A"'))) {
+    throw new Error('Expected union order C,B,A in items');
+  }
+  return { pass: true };
+}
+
+async function case_sentinel_escape_test() {
+  const events = await readSSE('/v1/stream', { mode: 'sentinel_escape_test' });
+  const text = get(events, 'json.delta').map((d) => d.chunk || '').join('');
+  if (!text.includes('\\u27E6') || !text.includes('\\u27E7')) throw new Error('Expected escaped sentinel sequences');
+  return { pass: true };
+}
+
+async function case_deep_combo_many_items_test() {
+  const events = await readSSE('/v1/stream', { mode: 'deep_combo_many_items_test' });
+  const text = get(events, 'json.delta').map((d) => d.chunk || '').join('');
+  // Expect at least 12 items produced
+  let countA = (text.match(/\"kind\":\"A\"/g) || []).length;
+  let countB = (text.match(/\"kind\":\"B\"/g) || []).length;
+  let countC = (text.match(/\"kind\":\"C\"/g) || []).length;
+  if (countA + countB + countC < 12) throw new Error('Expected 12 union items');
+  return { pass: true };
+}
+
+async function case_complex_enum_validation_test() {
+  const events = await readSSE('/v1/stream', { mode: 'complex_enum_validation_test' });
+  const begins = get(events, 'json.begin');
+  if (begins[0]?.schema !== 'ComplexDemo') throw new Error('Expected schema=ComplexDemo');
+  const text = get(events, 'json.delta').map((d) => d.chunk || '').join('');
+  if (!text.includes('"mode":"book"')) throw new Error('Expected mode=book');
+  if (!text.includes('"kind":"place"') || !text.includes('"kind":"time"')) throw new Error('Expected mixed targets present');
   return { pass: true };
 }
 
@@ -263,6 +386,13 @@ async function main() {
     { name: 'silence_timeout_test', fn: case_silence_timeout_test },
     { name: 'provider_fallback_test', fn: case_provider_fallback_test },
     { name: 'complex_schema_test', fn: case_complex_schema_test },
+    { name: 'deep_combo_test', fn: case_deep_combo_test },
+    { name: 'complex_late_keys_test', fn: case_complex_late_keys_test },
+    { name: 'deep_combo_no_flags_test', fn: case_deep_combo_no_flags_test },
+    { name: 'union_order_test', fn: case_union_order_test },
+    { name: 'sentinel_escape_test', fn: case_sentinel_escape_test },
+    { name: 'deep_combo_many_items_test', fn: case_deep_combo_many_items_test },
+    { name: 'complex_enum_validation_test', fn: case_complex_enum_validation_test },
   ];
   let pass = 0;
   for (const c of cases) {
