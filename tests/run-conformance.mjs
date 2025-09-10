@@ -28,60 +28,56 @@ async function readSSE(path, body) {
         if (line.startsWith('event: ')) event = line.slice(7).trim();
         else if (line.startsWith('data: ')) data += line.slice(6);
       }
-
-async function case_complex_late_keys_test() {
-  const text = get(events, 'json.delta').map((d) => d.chunk || '').join('');
-  if (text.includes('"flags"')) throw new Error('Flags should be optional/defaulted and may be absent in JSON');
-  return { pass: true };
-}
-
-async function case_union_order_test() {
-  const events = await readSSE('/v1/stream', { mode: 'union_order_test' });
-  const begins = get(events, 'json.begin');
-  if (begins[0]?.schema !== 'DeepCombo') throw new Error('Expected schema=DeepCombo');
-  const text = get(events, 'json.delta').map((d) => d.chunk || '').join('');
-  if (!(text.indexOf('"kind":"C"') < text.indexOf('"kind":"B"') && text.indexOf('"kind":"B"') < text.indexOf('"kind":"A"'))) {
-    throw new Error('Expected union order C,B,A in items');
-  }
-  return { pass: true };
-}
-
-async function case_sentinel_escape_test() {
-  const events = await readSSE('/v1/stream', { mode: 'sentinel_escape_test' });
-  const text = get(events, 'json.delta').map((d) => d.chunk || '').join('');
-  if (!text.includes('\\u27E6') || !text.includes('\\u27E7')) throw new Error('Expected escaped sentinel sequences');
-  return { pass: true };
-}
-
-async function case_deep_combo_many_items_test() {
-  const events = await readSSE('/v1/stream', { mode: 'deep_combo_many_items_test' });
-  const text = get(events, 'json.delta').map((d) => d.chunk || '').join('');
-  // Expect at least 12 items produced
-  let countA = (text.match(/"kind":"A"/g) || []).length;
-  let countB = (text.match(/"kind":"B"/g) || []).length;
-  let countC = (text.match(/"kind":"C"/g) || []).length;
-  if (countA + countB + countC < 12) throw new Error('Expected 12 union items');
-  return { pass: true };
-}
-
-async function case_complex_enum_validation_test() {
-  const events = await readSSE('/v1/stream', { mode: 'complex_enum_validation_test' });
-  const begins = get(events, 'json.begin');
-  if (begins[0]?.schema !== 'ComplexDemo') throw new Error('Expected schema=ComplexDemo');
-  const text = get(events, 'json.delta').map((d) => d.chunk || '').join('');
-  if (!text.includes('"mode":"book"')) throw new Error('Expected mode=book');
-  if (!text.includes('"kind":"place"') || !text.includes('"kind":"time"')) throw new Error('Expected mixed targets present');
-  return { pass: true };
-}
       try {
         const parsed = data ? JSON.parse(data) : {};
         events.push({ event, data: parsed });
       } catch {
-        events.push({ event, data: data });
+        events.push({ event, data });
       }
     }
   }
   return events;
+}
+
+async function case_complex_schema_repair_test() {
+  const events = await readSSE('/v1/stream', { mode: 'complex_schema_repair_test' });
+  const order = events.map((e) => e.event);
+  if (!order.includes('json.begin')) throw new Error('Expected ComplexDemo emitted');
+  const deltas = get(events, 'result.delta');
+  const text = deltas.map((d) => d.chunk || '').join('');
+  if (!text.includes('schema_repair_failed')) throw new Error('Expected repaired AssistantReply with diagnostics.error=schema_repair_failed');
+  return { pass: true };
+}
+
+async function case_deep_combo_repair_test() {
+  const events = await readSSE('/v1/stream', { mode: 'deep_combo_repair_test' });
+  const order = events.map((e) => e.event);
+  if (!order.includes('json.begin')) throw new Error('Expected DeepCombo emitted');
+  const deltas = get(events, 'result.delta');
+  const text = deltas.map((d) => d.chunk || '').join('');
+  if (!text.includes('schema_repair_failed')) throw new Error('Expected repaired AssistantReply with diagnostics.error=schema_repair_failed');
+  return { pass: true };
+}
+
+async function case_deep_combo_nested_matrix_test() {
+  const events = await readSSE('/v1/stream', { mode: 'deep_combo_nested_matrix_test' });
+  const begins = get(events, 'json.begin');
+  if (begins[0]?.schema !== 'DeepCombo') throw new Error('Expected schema=DeepCombo');
+  const text = get(events, 'json.delta').map((d) => d.chunk || '').join('');
+  if (!text.includes('"matrix"')) throw new Error('Expected matrix field present');
+  const itemCount = (text.match(/"kind":"A"|"kind":"B"/g) || []).length;
+  if (itemCount < 8) throw new Error('Expected at least 8 items');
+  return { pass: true };
+}
+
+async function case_deep_combo_massive_strings_test() {
+  const events = await readSSE('/v1/stream', { mode: 'deep_combo_massive_strings_test' });
+  const begins = get(events, 'json.begin');
+  if (begins[0]?.schema !== 'DeepCombo') throw new Error('Expected schema=DeepCombo');
+  const text = get(events, 'json.delta').map((d) => d.chunk || '').join('');
+  if (!text.includes('"tags"')) throw new Error('Expected tags present');
+  if (!/x{1000,}/.test(text)) throw new Error('Expected massive strings present');
+  return { pass: true };
 }
 
 function assert(cond, message) {
@@ -185,9 +181,9 @@ async function case_deep_combo_many_items_test() {
   const events = await readSSE('/v1/stream', { mode: 'deep_combo_many_items_test' });
   const text = get(events, 'json.delta').map((d) => d.chunk || '').join('');
   // Expect at least 12 items produced
-  let countA = (text.match(/\"kind\":\"A\"/g) || []).length;
-  let countB = (text.match(/\"kind\":\"B\"/g) || []).length;
-  let countC = (text.match(/\"kind\":\"C\"/g) || []).length;
+  let countA = (text.match(/"kind":"A"/g) || []).length;
+  let countB = (text.match(/"kind":"B"/g) || []).length;
+  let countC = (text.match(/"kind":"C"/g) || []).length;
   if (countA + countB + countC < 12) throw new Error('Expected 12 union items');
   return { pass: true };
 }
@@ -393,6 +389,10 @@ async function main() {
     { name: 'sentinel_escape_test', fn: case_sentinel_escape_test },
     { name: 'deep_combo_many_items_test', fn: case_deep_combo_many_items_test },
     { name: 'complex_enum_validation_test', fn: case_complex_enum_validation_test },
+    { name: 'complex_schema_repair_test', fn: case_complex_schema_repair_test },
+    { name: 'deep_combo_repair_test', fn: case_deep_combo_repair_test },
+    { name: 'deep_combo_nested_matrix_test', fn: case_deep_combo_nested_matrix_test },
+    { name: 'deep_combo_massive_strings_test', fn: case_deep_combo_massive_strings_test },
   ];
   let pass = 0;
   for (const c of cases) {

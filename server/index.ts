@@ -126,7 +126,11 @@ app.post('/v1/stream', async (request, reply) => {
       mode === 'union_order_test' ||
       mode === 'sentinel_escape_test' ||
       mode === 'deep_combo_many_items_test' ||
-      mode === 'complex_enum_validation_test'
+      mode === 'complex_enum_validation_test' ||
+      mode === 'complex_schema_repair_test' ||
+      mode === 'deep_combo_repair_test' ||
+      mode === 'deep_combo_nested_matrix_test' ||
+      mode === 'deep_combo_massive_strings_test'
     );
     if (!skipPrelude) {
       // 1) Action object (not strictly needed for tool, but demonstrates json.* frames)
@@ -242,6 +246,84 @@ app.post('/v1/stream', async (request, reply) => {
       await delay(5);
       parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
       parser.ingest(JSON.stringify({ answer: 'enum ok', citations: [] }));
+      parser.ingest('⟦END_RESULT id=R1⟧');
+    } else if (mode === 'complex_schema_repair_test') {
+      // Emit ComplexDemo then an invalid AssistantReply to trigger repair
+      await delay(5);
+      parser.ingest('⟦BEGIN_OBJECT id=OC4 schema=ComplexDemo⟧');
+      parser.ingest('{"mode":"search","targets":[{"kind":"place","id":"p3"}],"notes":[]}');
+      parser.ingest('⟦END_OBJECT id=OC4⟧');
+      if (isClosed) return;
+      await delay(5);
+      // Invalid result (missing answer)
+      parser.ingest('⟦BEGIN_RESULT id=R_BAD schema=AssistantReply⟧');
+      parser.ingest(JSON.stringify({ citations: [] }));
+      parser.ingest('⟦END_RESULT id=R_BAD⟧');
+      const bad = validator.notes.find((n) => n.kind === 'result' && n.schema === 'AssistantReply' && !n.ok);
+      if (bad) {
+        degraded = true;
+        const repaired = attemptRepair(bad.errors);
+        await delay(10);
+        parser.ingest('⟦BEGIN_RESULT id=R_FIX schema=AssistantReply⟧');
+        parser.ingest(JSON.stringify(repaired));
+        parser.ingest('⟦END_RESULT id=R_FIX⟧');
+      }
+    } else if (mode === 'deep_combo_repair_test') {
+      // Emit DeepCombo then an invalid AssistantReply to trigger repair
+      await delay(5);
+      parser.ingest('⟦BEGIN_OBJECT id=OD6 schema=DeepCombo⟧');
+      parser.ingest('{"meta":{"version":1,"source":"cli"},"items":[{"kind":"A","id":"ax","weight":1}],"flags":[]}');
+      parser.ingest('⟦END_OBJECT id=OD6⟧');
+      if (isClosed) return;
+      await delay(5);
+      // Invalid result (missing answer)
+      parser.ingest('⟦BEGIN_RESULT id=R_BAD schema=AssistantReply⟧');
+      parser.ingest(JSON.stringify({ citations: [] }));
+      parser.ingest('⟦END_RESULT id=R_BAD⟧');
+      const bad2 = validator.notes.find((n) => n.kind === 'result' && n.schema === 'AssistantReply' && !n.ok);
+      if (bad2) {
+        degraded = true;
+        const repaired2 = attemptRepair(bad2.errors);
+        await delay(10);
+        parser.ingest('⟦BEGIN_RESULT id=R_FIX schema=AssistantReply⟧');
+        parser.ingest(JSON.stringify(repaired2));
+        parser.ingest('⟦END_RESULT id=R_FIX⟧');
+      }
+    } else if (mode === 'deep_combo_nested_matrix_test') {
+      // Emit DeepCombo with extra nested matrix field for deep complexity
+      await delay(5);
+      parser.ingest('⟦BEGIN_OBJECT id=OD7 schema=DeepCombo⟧');
+      parser.ingest('{"meta":{"version":1,"source":"cli"},"items":[');
+      for (let i = 0; i < 8; i++) {
+        const frag = i % 2 === 0
+          ? `{"kind":"A","id":"na${i}","weight":${i}}`
+          : `{"kind":"B","name":"nb${i}","tags":["t${i}"]}`;
+        parser.ingest(frag + (i < 7 ? ',' : ''));
+        await delay(2);
+      }
+      parser.ingest('],"flags":["x","y"],"matrix":[[');
+      // nested arrays of small objects (as strings inside to keep schema permissive)
+      parser.ingest('{"k":"v"},{"k":"w"}');
+      parser.ingest(']]}');
+      parser.ingest('⟦END_OBJECT id=OD7⟧');
+      if (isClosed) return;
+      await delay(5);
+      parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
+      parser.ingest(JSON.stringify({ answer: 'nested matrix ok', citations: [] }));
+      parser.ingest('⟦END_RESULT id=R1⟧');
+    } else if (mode === 'deep_combo_massive_strings_test') {
+      // Emit DeepCombo with very long strings in tags to simulate heavy deltas
+      await delay(5);
+      parser.ingest('⟦BEGIN_OBJECT id=OD8 schema=DeepCombo⟧');
+      const long = 'x'.repeat(2048);
+      parser.ingest('{"meta":{"version":1,"source":"cli"},"items":[');
+      parser.ingest(`{"kind":"B","name":"big","tags":["${long}","${long}"]}`);
+      parser.ingest('],"flags":[]}');
+      parser.ingest('⟦END_OBJECT id=OD8⟧');
+      if (isClosed) return;
+      await delay(5);
+      parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
+      parser.ingest(JSON.stringify({ answer: 'massive strings ok', citations: [] }));
       parser.ingest('⟦END_RESULT id=R1⟧');
     } else if (mode === 'timeout_test') {
       // Sleep longer than timeout to trigger timeout handling
