@@ -7,4 +7,6 @@ export const CONFIG = {
   TEMPERATURE: Number(process.env.TEMPERATURE ?? 0.2),
   SEED: Number(process.env.SEED ?? 42),
   MAX_TOKENS: Number(process.env.MAX_TOKENS ?? 384),
+  GROQ_API_KEY: process.env.GROQ_API_KEY ?? '',
+  GROQ_BASE_URL: process.env.GROQ_BASE_URL ?? 'https://api.groq.com/openai/v1',
 };

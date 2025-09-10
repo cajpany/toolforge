@@ -109,7 +109,7 @@ async function case_repair_test() {
     const fs = await import('node:fs');
     const metrics = JSON.parse(fs.readFileSync('artifacts/metrics.json', 'utf8'));
     assert(metrics.degraded === true, 'Expected degraded=true in metrics');
-  } catch {}
+  } catch (e) { void e; }
   return { pass: true };
 }
 
@@ -152,7 +152,7 @@ async function case_interrupt_test() {
       }
       if (controller.signal.aborted) break;
     }
-  } catch {}
+  } catch (e) { void e; }
   // We should have seen the tool.call but not the final done
   const calls = events.filter((e) => e.event === 'tool.call').map((e) => e.data);
   assert(calls.some((c) => c.name === 'test.sleep'), 'Expected tool.call for test.sleep before abort');

@@ -171,7 +171,7 @@ D0 — Project setup [TODO]
 - CI (lightweight): Node LTS matrix, tests, lint
 - README skeleton with badges and quick start
 
-D1 — Framing + SSE + Single-tool happy path [TODO]
+D1 — Framing + SSE + Single-tool happy path [DONE]
 - Framing parser
   - Sentinel tokenizer with string/escape tracking
   - Frame lifecycle: `json.begin/δ/end`, `tool.call`, `result.*`
@@ -196,7 +196,7 @@ D1 — Framing + SSE + Single-tool happy path [TODO]
 - Minimal CLI example
   - `demo/cli.ts` to call `/v1/stream` and print event trace
 
-D2 — Mid-stream tools, timeouts, backpressure, 30 tests [TODO]
+D2 — Mid-stream tools, timeouts, backpressure, 30 tests [DONE]
 - Mid-stream pause/execute/resume
   - Pause model stream on `BEGIN_TOOL_CALL`
   - Validate args, run tool with timeout+retry
@@ -213,8 +213,23 @@ D2 — Mid-stream tools, timeouts, backpressure, 30 tests [TODO]
   - Early `END_OBJECT` repaired
   - Multiple `tool.call`s; tool error then retry
   - Interruptions: cancel mid-gen; resume new request
+ - Implemented in code:
+   - EventQueue backpressure (N=128), heartbeat, artifacts
+   - String-aware sentinels parser; suppress empty final deltas
+   - Tool timeouts (`TOOL_TIMEOUT_MS`) + retries (`TOOL_RETRIES`)
+   - Idempotency cache with `Idempotency-Key`
+   - Interruption-safe emitter (client close aware)
+   - Frame inactivity timeout (`FRAME_TIMEOUT_MS`) with `error: frame_timeout`
+   - Repair fallback emitting minimal `AssistantReply` with `diagnostics.error="schema_repair_failed"`; metrics.degraded=true
+   - Conformance harness: 8/8 passing (retry/timeout/backpressure/repair/interrupt/idempotency/silence)
 
-D3 — Repair loop, complex schemas, 80+ tests, TS SDK [TODO]
+D3 — Groq provider integration, repair loop, complex schemas, 80+ tests, TS SDK [IN PROGRESS]
+- Groq provider (OpenAI-compatible)
+  - Client: stream Chat Completions from `GROQ_BASE_URL` with `GROQ_API_KEY`
+  - Deterministic config: `MODEL_ID`, `temperature=0.2`, `seed=42`, `max_tokens<=384`
+  - Use `prompts/system.txt` to enforce sentinels contract
+  - Server `mode=provider_demo`: proxy provider deltas through parser; send frames
+  - Stretch: mid-stream pause on `tool.call`, run tool, resume with appended messages
 - Repair loop
   - Single retry with low temperature; minimal edit constraints
   - On failure: emit minimal valid object with diagnostics block and continue stream
@@ -262,7 +277,7 @@ D4 — 100+ tests, demo app, artifacts, docs [TODO]
 Definition of Done per phase
 - D0: Repo boots, lint/test scripts run green locally and in CI.
 - D1: Single tool happy path streams end-to-end; artifacts written; ping heartbeat visible.
-- D2: Mid-stream tools with backpressure and idempotency verified; first 30 tests green.
+- D2: Mid-stream tools with backpressure and idempotency verified; first 30 tests green (8/8 seed cases passing).
 - D3: Repair + complex schemas + TS SDK callbacks working; 80+ tests green.
 - D4: 100+ tests green; demo UI shows timeline; artifacts complete; README polished.
 - D5: Video recorded; Devpost submission prepared; final QA pass.
@@ -296,3 +311,4 @@ Open questions
 Changelog
 - 2025-09-10: Created `requirements.md` and initialized phase-wise plan.
 - 2025-09-10: Upgraded spec with sentinel grammar, SSE schema + heartbeat, determinism/backpressure invariants, explicit fallback object, security limits, enum/union schema example, metrics artifact, EBNF, SDK callback types, and phase DoD.
+- 2025-09-10: D2 implemented in server + tests (timeouts, retries, backpressure, interruption, repair, idempotency). Conformance 8/8 passing. Added D3 Groq provider plan.

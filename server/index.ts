@@ -7,6 +7,7 @@ import { ArtifactsWriter } from './artifacts.js';
 import { Validator } from './validator.js';
 import { attemptRepair } from './repair.js';
 import { IdempotencyCache } from './idempotency.js';
+import { streamFromProvider } from './provider.js';
 
 const app = Fastify({ logger: true });
 
@@ -207,6 +208,22 @@ app.post('/v1/stream', async (request, reply) => {
     } else if (mode === 'silence_test') {
       // Do nothing further; expect frame timeout to trigger
       await delay(CONFIG.FRAME_TIMEOUT_MS + 200);
+    } else if (mode === 'provider_demo') {
+      // Stream from provider with deterministic config and forward to parser
+      const system = await import('node:fs').then((m) => m.readFileSync('prompts/system.txt', 'utf8'));
+      const userMsg = typeof body?.prompt === 'string' ? body.prompt : 'Follow the sentinel framing instructions and produce a short demo.';
+      await streamFromProvider({
+        system,
+        user: userMsg,
+        model: CONFIG.MODEL_ID,
+        temperature: CONFIG.TEMPERATURE,
+        seed: CONFIG.SEED,
+        max_tokens: CONFIG.MAX_TOKENS,
+      }, async (delta: string) => {
+        if (isClosed) return false;
+        if (delta) parser.ingest(delta);
+        return true;
+      });
     } else {
       // Default happy path: places.search then bookings.create
       await delay(10);
