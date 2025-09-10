@@ -81,6 +81,8 @@ app.post('/v1/stream', async (request, reply) => {
   const parser = new FrameStream(emit);
 
   // Model emulator with mid-stream tool call
+  const mode = (body && (body as any).mode) as string | undefined;
+
   const emitTokens = async () => {
     // 1) Action object (not strictly needed for tool, but demonstrates json.* frames)
     parser.ingest('⟦BEGIN_OBJECT id=O1 schema=Action⟧');
@@ -89,62 +91,113 @@ app.post('/v1/stream', async (request, reply) => {
     await delay(10);
     parser.ingest('⟦END_OBJECT id=O1⟧');
 
-    // 2) Begin tool call
-    await delay(10);
-    parser.ingest('⟦BEGIN_TOOL_CALL id=T1 name=places.search⟧');
-    parser.ingest(JSON.stringify({ query: 'pizza', radius_km: 3 }));
-    parser.ingest('⟦END_TOOL_CALL id=T1⟧');
-
-    // Handle tool execution synchronously after tool.call is emitted
-    const tStart = Date.now();
-    const args = { query: 'pizza', radius_km: 3 };
-    let result: any = [];
-    try {
-      result = await execTool('places.search', args, request.headers['idempotency-key'] as string | undefined);
-    } catch (err) {
-      result = { error: String(err) };
-    }
-    toolLatencyMs = Date.now() - tStart;
-    emit({ type: 'tool.result', id: 'T1', name: 'places.search', result });
-
-    // 3) Second tool call: bookings.create (choose first open place if any)
-    await delay(10);
-    const open = Array.isArray(result) ? (result as any[]).find((r: any) => r.open_now) : null;
-    if (open) {
-      parser.ingest('⟦BEGIN_TOOL_CALL id=T2 name=bookings.create⟧');
-      const bookingArgs = { place_id: open.id, time: '19:00', party_size: 2 };
-      parser.ingest(JSON.stringify(bookingArgs));
-      parser.ingest('⟦END_TOOL_CALL id=T2⟧');
+    if (mode === 'retry_test') {
+      // Induce a single failure then retry via execTool
+      await delay(10);
+      parser.ingest('⟦BEGIN_TOOL_CALL id=T1 name=test.failOnce⟧');
+      const args = { key: 'k1' };
+      parser.ingest(JSON.stringify(args));
+      parser.ingest('⟦END_TOOL_CALL id=T1⟧');
+      let result: any;
       try {
-        const bookingRes = await execTool('bookings.create', bookingArgs, request.headers['idempotency-key'] as string | undefined);
-        emit({ type: 'tool.result', id: 'T2', name: 'bookings.create', result: bookingRes });
-        await delay(10);
-        parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
-        parser.ingest(
-          JSON.stringify({
-            answer: `Found ${(result as any[]).length ?? 0} places. Booked at ${open.name} for 7pm. Confirmation: ${bookingRes.confirmation_id}.`,
-            citations: [],
-          }),
-        );
-        parser.ingest('⟦END_RESULT id=R1⟧');
+        result = await execTool('test.failOnce', args, request.headers['idempotency-key'] as string | undefined);
       } catch (err) {
-        // Booking failed: still return found places
-        await delay(10);
-        parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
-        parser.ingest(
-          JSON.stringify({
-            answer: `Found ${(result as any[]).length ?? 0} places. Booking failed: ${String(err)}`,
-            citations: [],
-          }),
-        );
-        parser.ingest('⟦END_RESULT id=R1⟧');
+        result = { error: String(err) };
       }
-    } else {
-      // No open place, just return found places
+      emit({ type: 'tool.result', id: 'T1', name: 'test.failOnce', result });
       await delay(10);
       parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
-      parser.ingest(JSON.stringify({ answer: `Found ${(result as any[]).length ?? 0} places (none open).`, citations: [] }));
+      parser.ingest(JSON.stringify({ answer: `Retry attempts ${(result?.attempt) ?? 0}`, citations: [] }));
       parser.ingest('⟦END_RESULT id=R1⟧');
+    } else if (mode === 'timeout_test') {
+      // Sleep longer than timeout to trigger timeout handling
+      await delay(10);
+      parser.ingest('⟦BEGIN_TOOL_CALL id=T1 name=test.sleep⟧');
+      const args = { ms: CONFIG.TOOL_TIMEOUT_MS + 1000 };
+      parser.ingest(JSON.stringify(args));
+      parser.ingest('⟦END_TOOL_CALL id=T1⟧');
+      let result: any;
+      try {
+        result = await execTool('test.sleep', args, request.headers['idempotency-key'] as string | undefined);
+      } catch (err) {
+        result = { error: String(err) };
+      }
+      emit({ type: 'tool.result', id: 'T1', name: 'test.sleep', result });
+      await delay(10);
+      parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
+      parser.ingest(JSON.stringify({ answer: `Timeout test: ${result?.error ? 'timed out' : 'ok'}`, citations: [] }));
+      parser.ingest('⟦END_RESULT id=R1⟧');
+    } else if (mode === 'backpressure_test') {
+      // Emit many small result deltas to exercise SSE queue backpressure
+      await delay(10);
+      parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
+      const prefix = '{"answer":"';
+      const suffix = '","citations":[]}';
+      parser.ingest(prefix);
+      for (let i = 0; i < 200; i++) {
+        parser.ingest('x');
+        await delay(1);
+      }
+      parser.ingest(suffix);
+      parser.ingest('⟦END_RESULT id=R1⟧');
+    } else {
+      // Default happy path: places.search then bookings.create
+      await delay(10);
+      parser.ingest('⟦BEGIN_TOOL_CALL id=T1 name=places.search⟧');
+      parser.ingest(JSON.stringify({ query: 'pizza', radius_km: 3 }));
+      parser.ingest('⟦END_TOOL_CALL id=T1⟧');
+
+      // Handle tool execution synchronously after tool.call is emitted
+      const tStart = Date.now();
+      const args = { query: 'pizza', radius_km: 3 };
+      let result: any = [];
+      try {
+        result = await execTool('places.search', args, request.headers['idempotency-key'] as string | undefined);
+      } catch (err) {
+        result = { error: String(err) };
+      }
+      toolLatencyMs = Date.now() - tStart;
+      emit({ type: 'tool.result', id: 'T1', name: 'places.search', result });
+
+      // Second tool call: bookings.create (choose first open place if any)
+      await delay(10);
+      const open = Array.isArray(result) ? (result as any[]).find((r: any) => r.open_now) : null;
+      if (open) {
+        parser.ingest('⟦BEGIN_TOOL_CALL id=T2 name=bookings.create⟧');
+        const bookingArgs = { place_id: open.id, time: '19:00', party_size: 2 };
+        parser.ingest(JSON.stringify(bookingArgs));
+        parser.ingest('⟦END_TOOL_CALL id=T2⟧');
+        try {
+          const bookingRes = await execTool('bookings.create', bookingArgs, request.headers['idempotency-key'] as string | undefined);
+          emit({ type: 'tool.result', id: 'T2', name: 'bookings.create', result: bookingRes });
+          await delay(10);
+          parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
+          parser.ingest(
+            JSON.stringify({
+              answer: `Found ${(result as any[]).length ?? 0} places. Booked at ${open.name} for 7pm. Confirmation: ${bookingRes.confirmation_id}.`,
+              citations: [],
+            }),
+          );
+          parser.ingest('⟦END_RESULT id=R1⟧');
+        } catch (err) {
+          // Booking failed: still return found places
+          await delay(10);
+          parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
+          parser.ingest(
+            JSON.stringify({
+              answer: `Found ${(result as any[]).length ?? 0} places. Booking failed: ${String(err)}`,
+              citations: [],
+            }),
+          );
+          parser.ingest('⟦END_RESULT id=R1⟧');
+        }
+      } else {
+        // No open place, just return found places
+        await delay(10);
+        parser.ingest('⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧');
+        parser.ingest(JSON.stringify({ answer: `Found ${(result as any[]).length ?? 0} places (none open).`, citations: [] }));
+        parser.ingest('⟦END_RESULT id=R1⟧');
+      }
     }
 
     // Done
@@ -188,9 +241,25 @@ async function execTool(name: keyof typeof ToolsRegistry | string, args: any, id
   const fn = ToolsRegistry[String(name)];
   if (!fn) throw new Error(`Unknown tool: ${name}`);
   const timeoutMs = CONFIG.TOOL_TIMEOUT_MS;
-  const res = await withTimeout(fn(args, idempotencyKey), timeoutMs, `tool_timeout:${name}`);
-  idemCache.set(idempotencyKey, String(name), args, res);
-  return res;
+  const retries = CONFIG.TOOL_RETRIES;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await withTimeout(fn(args, idempotencyKey), timeoutMs, `tool_timeout:${name}`);
+      idemCache.set(idempotencyKey, String(name), args, res);
+      return res;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < retries) {
+        await delay(Math.min(100 * (attempt + 1), 500));
+        continue;
+      }
+      throw err;
+    }
+  }
+  // Unreachable, but for TS
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  throw lastErr as any;
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number, tag = 'timeout'): Promise<T> {

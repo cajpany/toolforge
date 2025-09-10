@@ -63,9 +63,46 @@ async function case_basic_two_tools() {
   return { pass: true };
 }
 
+async function case_retry_test() {
+  const events = await readSSE('/v1/stream', { mode: 'retry_test' });
+  const calls = get(events, 'tool.call');
+  assert(calls[0]?.name === 'test.failOnce', 'Expected test.failOnce tool.call');
+  const results = get(events, 'tool.result');
+  const res = results.find((r) => r.name === 'test.failOnce')?.result || {};
+  assert(res.attempt === 2, `Expected attempt 2 after retry, got ${res.attempt}`);
+  const deltas = get(events, 'result.delta');
+  const last = deltas[deltas.length - 1] || {};
+  assert((last.chunk || '').includes('Retry attempts 2'), 'Expected Retry attempts 2 in final result');
+  return { pass: true };
+}
+
+async function case_timeout_test() {
+  const events = await readSSE('/v1/stream', { mode: 'timeout_test' });
+  const results = get(events, 'tool.result');
+  const res = results.find((r) => r.name === 'test.sleep')?.result || {};
+  assert(res.error, 'Expected error field due to timeout');
+  const deltas = get(events, 'result.delta');
+  const last = deltas[deltas.length - 1] || {};
+  assert((last.chunk || '').includes('Timeout test: timed out'), 'Expected timed out acknowledgment in final result');
+  return { pass: true };
+}
+
+async function case_backpressure_test() {
+  const events = await readSSE('/v1/stream', { mode: 'backpressure_test' });
+  const deltas = get(events, 'result.delta');
+  assert(deltas.length >= 10, `Expected many result.delta frames, got ${deltas.length}`);
+  const hasBegin = get(events, 'result.begin').length === 1;
+  const hasEnd = get(events, 'result.end').length === 1;
+  assert(hasBegin && hasEnd, 'Expected single result.begin and result.end');
+  return { pass: true };
+}
+
 async function main() {
   const cases = [
     { name: 'basic_two_tools', fn: case_basic_two_tools },
+    { name: 'retry_test', fn: case_retry_test },
+    { name: 'timeout_test', fn: case_timeout_test },
+    { name: 'backpressure_test', fn: case_backpressure_test },
   ];
   let pass = 0;
   for (const c of cases) {
