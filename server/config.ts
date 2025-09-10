@@ -1,3 +1,4 @@
+import 'dotenv/config';
 export const CONFIG = {
   FRAME_TIMEOUT_MS: Number(process.env.FRAME_TIMEOUT_MS ?? 15000),
   TOOL_TIMEOUT_MS: Number(process.env.TOOL_TIMEOUT_MS ?? 8000),

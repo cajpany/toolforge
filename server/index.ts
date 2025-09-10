@@ -33,6 +33,9 @@ app.post('/v1/stream', async (request, reply) => {
   let toolLatencyMs: number | undefined;
   let degraded = false;
   let frameTimer: NodeJS.Timeout | null = null;
+  let hadResult = false;
+  // Track pending tool when in provider_tools_demo mode
+  let providerPendingTool: { id: string; name: string; args: any } | null = null;
 
   function resetFrameTimer() {
     if (frameTimer) clearTimeout(frameTimer);
@@ -70,6 +73,7 @@ app.post('/v1/stream', async (request, reply) => {
         void queue.send(e.type, { id: e.id, schema: e.schema });
         artifacts.appendFrame(e.type, e);
         resetFrameTimer();
+        hadResult = true;
         break;
       case 'result.delta':
         validator.onResultDelta(e.id, e.chunk);
@@ -88,6 +92,8 @@ app.post('/v1/stream', async (request, reply) => {
         void queue.send('tool.call', { id: e.id, name: e.name, args: e.args });
         artifacts.appendFrame('tool.call', { id: e.id, name: e.name, args: e.args });
         resetFrameTimer();
+        // Capture pending tool call for provider_tools_demo orchestration
+        providerPendingTool = { id: e.id, name: e.name, args: e.args } as any;
         break;
       }
       case 'tool.result': {
@@ -109,15 +115,18 @@ app.post('/v1/stream', async (request, reply) => {
   const mode = (body && (body as any).mode) as string | undefined;
 
   const emitTokens = async () => {
-    // 1) Action object (not strictly needed for tool, but demonstrates json.* frames)
-    parser.ingest('⟦BEGIN_OBJECT id=O1 schema=Action⟧');
-    await delay(10);
-    parser.ingest('{"type":"search","query":"pizza","radius_km":3}');
-    await delay(10);
-    parser.ingest('⟦END_OBJECT id=O1⟧');
+    const isProviderMode = mode === 'provider_demo' || mode === 'provider_tools_demo';
+    if (!isProviderMode) {
+      // 1) Action object (not strictly needed for tool, but demonstrates json.* frames)
+      parser.ingest('⟦BEGIN_OBJECT id=O1 schema=Action⟧');
+      await delay(10);
+      parser.ingest('{"type":"search","query":"pizza","radius_km":3}');
+      await delay(10);
+      parser.ingest('⟦END_OBJECT id=O1⟧');
 
-    if (isClosed) return;
-    resetFrameTimer();
+      if (isClosed) return;
+      resetFrameTimer();
+    }
     if (mode === 'retry_test') {
       // Induce a single failure then retry via execTool
       await delay(10);
@@ -224,6 +233,53 @@ app.post('/v1/stream', async (request, reply) => {
         if (delta) parser.ingest(delta);
         return true;
       });
+    } else if (mode === 'provider_tools_demo') {
+      // Orchestrate provider stream with mid-stream tools: pause -> execute -> resume
+      const system = await import('node:fs').then((m) => m.readFileSync('prompts/system.txt', 'utf8'));
+      const baseUser = typeof body?.prompt === 'string' ? body.prompt : 'Follow the sentinel framing instructions and produce a short demo with tools.';
+      let messages: Array<{ role: string; content: string }> = [
+        { role: 'system', content: system },
+        { role: 'user', content: baseUser },
+      ];
+
+      // Run multiple rounds until result emitted without further tool calls
+      for (let round = 0; round < 5; round++) {
+        providerPendingTool = null;
+        const controller = new AbortController();
+        await streamFromProvider({
+          messages,
+          model: CONFIG.MODEL_ID,
+          temperature: CONFIG.TEMPERATURE,
+          seed: CONFIG.SEED,
+          max_tokens: CONFIG.MAX_TOKENS,
+        }, async (delta: string) => {
+          if (isClosed) return false;
+          if (delta) parser.ingest(delta);
+          // If model emitted a tool.call, abort to handle it
+          if (providerPendingTool) return false;
+          return true;
+        }, controller.signal).catch(() => { /* ignore abort or provider end */ });
+
+        if (isClosed) return;
+        if (!providerPendingTool) {
+          // No tool requested in this round; assume provider reached END_RESULT path
+          break;
+        }
+
+        // Execute the pending tool
+        const { id, name, args } = providerPendingTool;
+        providerPendingTool = null;
+        let result: any;
+        try {
+          result = await execTool(name, args, request.headers['idempotency-key'] as string | undefined);
+        } catch (err) {
+          result = { error: String(err) };
+        }
+        emit({ type: 'tool.result', id, name, result });
+
+        // Append tool result to messages for the next round
+        messages = messages.concat({ role: 'system', content: `TOOL_RESULT id=${id} name=${name}\n${JSON.stringify(result)}` });
+      }
     } else {
       // Default happy path: places.search then bookings.create
       await delay(10);
@@ -288,6 +344,23 @@ app.post('/v1/stream', async (request, reply) => {
         parser.ingest(JSON.stringify({ answer: `Found ${(result as any[]).length ?? 0} places (none open).`, citations: [] }));
         parser.ingest('⟦END_RESULT id=R1⟧');
       }
+    }
+
+    // If provider modes didn’t produce any result, emit degraded fallback
+    if (!hadResult && (mode === 'provider_demo' || mode === 'provider_tools_demo')) {
+      degraded = true;
+      parser.ingest('⟦BEGIN_RESULT id=R_FALLBACK schema=AssistantReply⟧');
+      parser.ingest(
+        JSON.stringify({
+          answer: '',
+          citations: [],
+          diagnostics: {
+            error: 'provider_no_result',
+            model: CONFIG.MODEL_ID,
+          },
+        }),
+      );
+      parser.ingest('⟦END_RESULT id=R_FALLBACK⟧');
     }
 
     // Done

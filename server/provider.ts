@@ -1,8 +1,9 @@
 import { CONFIG } from './config.js';
 
 export type ProviderParams = {
-  system: string;
-  user: string;
+  system?: string;
+  user?: string;
+  messages?: Array<{ role: string; content: string }>;
   model: string;
   temperature: number;
   seed?: number;
@@ -14,6 +15,7 @@ export type ProviderParams = {
 export async function streamFromProvider(
   params: ProviderParams,
   onDelta: (delta: string) => Promise<boolean> | boolean,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (!CONFIG.GROQ_API_KEY) throw new Error('Missing GROQ_API_KEY');
   const url = `${CONFIG.GROQ_BASE_URL.replace(/\/$/, '')}/chat/completions`;
@@ -23,23 +25,43 @@ export async function streamFromProvider(
     temperature: params.temperature,
     max_tokens: params.max_tokens,
     stream: true,
-    messages: [
-      { role: 'system', content: params.system },
-      { role: 'user', content: params.user },
-    ],
+    messages: params.messages && params.messages.length
+      ? params.messages
+      : [
+          { role: 'system', content: params.system ?? '' },
+          { role: 'user', content: params.user ?? '' },
+        ],
   };
   if (typeof params.seed === 'number') {
     // Some OpenAI-compatible providers support seed; safe to include
     body.seed = params.seed;
   }
 
+  // Base headers
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${CONFIG.GROQ_API_KEY}`,
+  };
+  // Optional extra headers for provider gateways (e.g., X-Title, Referer)
+  try {
+    const extraRaw = process.env.PROVIDER_EXTRA_HEADERS;
+    if (extraRaw) {
+      const extra = JSON.parse(extraRaw);
+      if (extra && typeof extra === 'object') {
+        for (const [k, v] of Object.entries(extra)) {
+          if (typeof v === 'string') headers[k] = v;
+        }
+      }
+    }
+  } catch {
+    // ignore malformed extras
+  }
+
   const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${CONFIG.GROQ_API_KEY}`,
-    },
+    headers,
     body: JSON.stringify(body),
+    signal,
   });
   if (!res.ok || !res.body) {
     const t = await res.text().catch(() => '');

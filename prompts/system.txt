@@ -18,3 +18,20 @@ After tool results are provided, finish with:
 ⟦END_RESULT id=<ID>⟧
 
 NEVER emit extra commentary. NEVER emit invalid JSON. If unsure, emit a minimal valid object.
+
+Examples (copy exactly):
+
+1) AssistantReply
+⟦BEGIN_RESULT id=R1 schema=AssistantReply⟧
+{"answer":"ok","citations":[]}
+⟦END_RESULT id=R1⟧
+
+2) Tool call
+⟦BEGIN_TOOL_CALL id=T1 name=places.search⟧
+{"query":"pizza","radius_km":3}
+⟦END_TOOL_CALL id=T1⟧
+
+3) Second tool call
+⟦BEGIN_TOOL_CALL id=T2 name=bookings.create⟧
+{"place_id":"p1","time":"19:00","party_size":2}
+⟦END_TOOL_CALL id=T2⟧

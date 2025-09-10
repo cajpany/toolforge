@@ -14,3 +14,79 @@ Artifacts
 
 License
 - MIT or Apache-2.0 (TBD in submission)
+
+## Environment Setup
+
+Create a `.env` file (see `.env.example`) with at least:
+
+```
+GROQ_BASE_URL=https://api.groq.com/openai/v1
+GROQ_API_KEY=your_api_key_here
+MODEL_ID=llama-3.1-70b-versatile
+REPAIR_RETRIES=1
+FRAME_TIMEOUT_MS=15000
+TOOL_TIMEOUT_MS=8000
+TEMPERATURE=0.2
+SEED=42
+MAX_TOKENS=384
+```
+
+Notes:
+- The server auto-loads `.env` via `dotenv/config`. Restart after changes.
+- Choose a Groq model you have access to (examples: `llama-3.1-70b-versatile`, `llama-3.1-8b-instant`, `gemma2-9b-it`, `mixtral-8x7b-32768`).
+- You can list models via:
+  - `curl -H "Authorization: Bearer $GROQ_API_KEY" "$GROQ_BASE_URL/models"`
+
+## Streaming Modes
+
+All modes are served at `POST /v1/stream` and emit SSE events: `json.*`, `tool.*`, `result.*`, `error`, `done`.
+
+1) Local demo (deterministic tools)
+- CLI: `npm run demo`
+- Happy path: two tool calls and a structured `AssistantReply`.
+
+2) Provider demo (Groq, OpenAI-compatible)
+- Start server: `npm run dev`
+- Run:
+
+```
+curl -N -H 'Content-Type: application/json' \
+  -d '{"mode":"provider_demo","prompt":"Follow the sentinel instructions. Emit an Action object, then a short AssistantReply."}' \
+  http://localhost:3000/v1/stream
+```
+
+3) Provider tools demo (pause/execute/resume)
+- Orchestrates mid-stream tool calls with the provider: pause → execute local tool → resume with appended context.
+
+```
+curl -N -H 'Content-Type: application/json' \
+  -d '{"mode":"provider_tools_demo","prompt":"First emit an Action object. Then call places.search with {\"query\":\"pizza\",\"radius_km\":3}. If any place is open, call bookings.create with {\"place_id\":\"p1\",\"time\":\"19:00\",\"party_size\":2}. Finally return AssistantReply."}' \
+  http://localhost:3000/v1/stream
+```
+
+## Conformance
+
+Run the seed harness (8/8 passing):
+
+```
+npm run test:conformance
+```
+
+Includes: retry, timeout, backpressure, repair, interruption, idempotency, silence (frame timeout).
+
+## Troubleshooting
+
+- `model_not_found` from provider
+  - Update `MODEL_ID` in `.env` to a model you have access to (e.g., `llama-3.1-70b-versatile`). Restart server.
+- `Missing GROQ_API_KEY`
+  - Set `GROQ_API_KEY` in `.env` and restart.
+- Silent streams or early timeouts
+  - `FRAME_TIMEOUT_MS` default is 15000. `error: frame_timeout` is emitted if no frames arrive in time.
+
+## Design Highlights
+
+- Sentinel grammar with string-aware parser; no empty terminal deltas
+- Backpressure-aware SSE queue (N=128) with heartbeats
+- Tool execution with timeout + retry + idempotency cache
+- Single-repair fallback and degraded metrics
+- Deterministic config (temperature, seed, max_tokens)

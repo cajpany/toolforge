@@ -11,10 +11,12 @@
     "lint": "eslint . --ext .ts",
     "format": "prettier -w .",
     "test": "vitest run",
-    "test:conformance": "node tests/run-conformance.mjs || echo \"Conformance harness TBD\""
+    "test:conformance": "node tests/run-conformance.mjs || echo \"Conformance harness TBD\"",
+    "test:provider": "node tests/provider-smoke.mjs"
   },
   "dependencies": {
     "fastify": "^5.6.0",
+    "dotenv": "^16.4.5",
     "zod": "^3.23.8"
   },
   "devDependencies": {
