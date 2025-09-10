@@ -29,6 +29,8 @@ TOOL_TIMEOUT_MS=8000
 TEMPERATURE=0.2
 SEED=42
 MAX_TOKENS=384
+# Optional: extra provider headers (JSON)
+# PROVIDER_EXTRA_HEADERS='{"X-Title":"ToolForge","HTTP-Referer":"https://your.site"}'
 ```
 
 Notes:
@@ -36,6 +38,7 @@ Notes:
 - Choose a Groq model you have access to (examples: `llama-3.1-70b-versatile`, `llama-3.1-8b-instant`, `gemma2-9b-it`, `mixtral-8x7b-32768`).
 - You can list models via:
   - `curl -H "Authorization: Bearer $GROQ_API_KEY" "$GROQ_BASE_URL/models"`
+ - Some providers require extra headers (e.g., OpenRouter). You can set `PROVIDER_EXTRA_HEADERS` as JSON in `.env`.
 
 ## Streaming Modes
 
@@ -90,3 +93,24 @@ Includes: retry, timeout, backpressure, repair, interruption, idempotency, silen
 - Tool execution with timeout + retry + idempotency cache
 - Single-repair fallback and degraded metrics
 - Deterministic config (temperature, seed, max_tokens)
+
+## TypeScript SDK (clients/ts)
+
+Simple usage example using callbacks for JSON frames, tool calls, result frames, and lifecycle:
+
+```ts
+import { startStream } from "../clients/ts/index";
+
+const h = startStream({
+  url: "http://localhost:3000/v1/stream",
+  body: { prompt: "Find pizza near me; book a table at 7pm if open." },
+  onJSON: (j) => console.log("json:", j),
+  onToolCall: async (t) => console.log("tool.call:", t),
+  onResult: (r) => console.log("result:", r),
+  onError: (e) => console.error("error:", e),
+  onDone: () => console.log("done"),
+  onPing: () => console.log("ping"),
+});
+
+// h.pause() to abort; h.isClosed() to check closed state
+```

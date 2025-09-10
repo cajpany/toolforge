@@ -1,6 +1,9 @@
 export type OnToolCall = (t: { id: string; name: string; args: unknown }) => Promise<unknown>;
 export type OnJSON = (j: { id: string; delta?: string; end?: boolean }) => void;
 export type OnResult = (r: { id: string; delta?: string; end?: boolean }) => void;
+export type OnError = (e: { code: string; message: string }) => void;
+export type OnDone = () => void;
+export type OnPing = () => void;
 
 export type StartStreamOptions = {
   url?: string;
@@ -9,12 +12,16 @@ export type StartStreamOptions = {
   onToolCall?: OnToolCall;
   onJSON?: OnJSON;
   onResult?: OnResult;
+  onError?: OnError;
+  onDone?: OnDone;
+  onPing?: OnPing;
 };
 
 export function startStream(opts: StartStreamOptions = {}) {
   const url = opts.url ?? 'http://localhost:3000/v1/stream';
   const controller = new AbortController();
   const signal = opts.signal ?? controller.signal;
+  let closed = false;
 
   (async () => {
     const res = await fetch(url, {
@@ -49,11 +56,15 @@ export function startStream(opts: StartStreamOptions = {}) {
           if (event.startsWith('json.')) opts.onJSON?.(parsed);
           else if (event.startsWith('result.')) opts.onResult?.(parsed);
           else if (event === 'tool.call') await opts.onToolCall?.(parsed);
+          else if (event === 'error') opts.onError?.(parsed);
+          else if (event === 'done') opts.onDone?.();
+          else if (event === 'ping') opts.onPing?.();
         } catch {
           // ignore parse errors in demo
         }
       }
     }
+    closed = true;
   })().catch((e) => {
     console.error('Stream error', e);
   });
@@ -64,6 +75,9 @@ export function startStream(opts: StartStreamOptions = {}) {
     },
     resume() {
       // No-op in demo; real impl would support continuation
+    },
+    isClosed() {
+      return closed;
     },
   };
 }

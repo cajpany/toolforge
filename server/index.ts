@@ -115,7 +115,7 @@ app.post('/v1/stream', async (request, reply) => {
   const mode = (body && (body as any).mode) as string | undefined;
 
   const emitTokens = async () => {
-    const isProviderMode = mode === 'provider_demo' || mode === 'provider_tools_demo';
+    const isProviderMode = mode === 'provider_demo' || mode === 'provider_tools_demo' || mode === 'provider_fallback_test';
     if (!isProviderMode) {
       // 1) Action object (not strictly needed for tool, but demonstrates json.* frames)
       parser.ingest('⟦BEGIN_OBJECT id=O1 schema=Action⟧');
@@ -277,9 +277,12 @@ app.post('/v1/stream', async (request, reply) => {
         }
         emit({ type: 'tool.result', id, name, result });
 
-        // Append tool result to messages for the next round
-        messages = messages.concat({ role: 'system', content: `TOOL_RESULT id=${id} name=${name}\n${JSON.stringify(result)}` });
+        // Append tool result to messages for the next round (assistant confirms tool results)
+        messages = messages.concat({ role: 'assistant', content: `TOOL_RESULT id=${id} name=${name}\n${JSON.stringify(result)}` });
       }
+    } else if (mode === 'provider_fallback_test') {
+      // Intentionally do not emit any result or tool frames; fallback will trigger
+      await delay(10);
     } else {
       // Default happy path: places.search then bookings.create
       await delay(10);
@@ -347,7 +350,7 @@ app.post('/v1/stream', async (request, reply) => {
     }
 
     // If provider modes didn’t produce any result, emit degraded fallback
-    if (!hadResult && (mode === 'provider_demo' || mode === 'provider_tools_demo')) {
+    if (!hadResult && (mode === 'provider_demo' || mode === 'provider_tools_demo' || mode === 'provider_fallback_test')) {
       degraded = true;
       parser.ingest('⟦BEGIN_RESULT id=R_FALLBACK schema=AssistantReply⟧');
       parser.ingest(

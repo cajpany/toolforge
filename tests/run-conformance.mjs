@@ -219,6 +219,24 @@ async function case_silence_timeout_test() {
   return { pass: true };
 }
 
+async function case_provider_fallback_test() {
+  const events = await readSSE('/v1/stream', { mode: 'provider_fallback_test' });
+  const order = events.map((e) => e.event);
+  // Expect a result frame from fallback
+  const hasResult = order.includes('result.begin') && order.includes('result.end');
+  assert(hasResult, 'Expected fallback result frames');
+  const deltas = get(events, 'result.delta');
+  const text = deltas.map((d) => d.chunk || '').join('');
+  assert(text.includes('provider_no_result'), 'Expected diagnostics.error=provider_no_result in fallback result');
+  // Verify metrics.degraded written
+  try {
+    const fs = await import('node:fs');
+    const metrics = JSON.parse(fs.readFileSync('artifacts/metrics.json', 'utf8'));
+    assert(metrics.degraded === true, 'Expected degraded=true in metrics for provider fallback');
+  } catch (e) { void e; }
+  return { pass: true };
+}
+
 async function main() {
   const cases = [
     { name: 'basic_two_tools', fn: case_basic_two_tools },
@@ -229,6 +247,7 @@ async function main() {
     { name: 'interrupt_test', fn: case_interrupt_test },
     { name: 'idempotency_test', fn: case_idempotency_test },
     { name: 'silence_timeout_test', fn: case_silence_timeout_test },
+    { name: 'provider_fallback_test', fn: case_provider_fallback_test },
   ];
   let pass = 0;
   for (const c of cases) {
