@@ -63,7 +63,12 @@ function summarize(event: string, data: any): string {
 }
 
 function main() {
-  const baseDir = process.argv[2] || 'artifacts';
+  const args = process.argv.slice(2);
+  const baseDir = args[0] || 'artifacts';
+  const flags = new Set(args.slice(1));
+  const NO_DELTA = flags.has('--no-delta');
+  const COMPACT = flags.has('--compact');
+  const ONLY_SUMMARY = flags.has('--only-summary');
   const framesPath = path.join(baseDir, 'frames.ndjson');
   const promptPath = path.join(baseDir, 'prompt.json');
   const metricsPath = path.join(baseDir, 'metrics.json');
@@ -89,42 +94,58 @@ function main() {
   if (lines.length === 0) {
     console.log('No frames.ndjson found or it is empty.');
   } else {
-    console.log('Timeline:');
+    if (!ONLY_SUMMARY) console.log('Timeline:');
     let t0 = 0;
-    let prevKey = '';
-    let firstDt = 0;
-    let count = 0;
-    let prevRendered = '';
-    function flush() {
-      if (!prevKey) return;
-      if (count > 1) console.log(`${prevRendered} × ${count}`);
-      else console.log(prevRendered);
-      prevKey = '';
-      firstDt = 0;
-      count = 0;
-      prevRendered = '';
+    // Aggregate contiguous deltas regardless of chunk size
+    let pendingType: 'json.delta' | 'result.delta' | '' = '';
+    let pendingCount = 0;
+    let pendingBytes = 0;
+    let pendingFirstDt = 0;
+    // Totals for summary when --no-delta
+    let totalJsonDeltaCount = 0;
+    let totalJsonDeltaBytes = 0;
+    let totalResultDeltaCount = 0;
+    let totalResultDeltaBytes = 0;
+    function flushDelta() {
+      if (pendingCount > 0 && pendingType) {
+        if (!NO_DELTA && !ONLY_SUMMARY) console.log(`[+${pad(pendingFirstDt)}ms] ${pendingType}  × ${pendingCount} (bytes=${pendingBytes})`);
+        if (pendingType === 'json.delta') { totalJsonDeltaCount += pendingCount; totalJsonDeltaBytes += pendingBytes; }
+        if (pendingType === 'result.delta') { totalResultDeltaCount += pendingCount; totalResultDeltaBytes += pendingBytes; }
+        pendingType = '';
+        pendingCount = 0;
+        pendingBytes = 0;
+        pendingFirstDt = 0;
+      }
     }
     lines.forEach((line, i) => {
       try {
         const rec = JSON.parse(line);
         if (i === 0) t0 = rec.t || 0;
         const dt = rec.t && t0 ? rec.t - t0 : 0;
-        const event = rec.event;
+        const event = rec.event as string;
         const data = rec.data;
-        const sum = summarize(event, data);
-        const key = `${event}|${sum}`;
-        if (key === prevKey) {
-          count++;
+        if (event === 'json.delta' || event === 'result.delta') {
+          const len = (data?.chunk ? String(data.chunk) : '').length;
+          if (pendingType && pendingType !== event) {
+            flushDelta();
+          }
+          if (!pendingType) pendingFirstDt = dt;
+          pendingType = event as typeof pendingType;
+          pendingCount++;
+          pendingBytes += len;
         } else {
-          flush();
-          prevKey = key;
-          firstDt = dt;
-          count = 1;
-          prevRendered = `[+${pad(firstDt)}ms] ${event}${sum ? '  ' + sum : ''}`;
+          flushDelta();
+          if (!ONLY_SUMMARY && !(COMPACT && event.startsWith('json.'))) {
+            const sum = summarize(event, data);
+            console.log(`[+${pad(dt)}ms] ${event}${sum ? '  ' + sum : ''}`);
+          }
         }
       } catch {}
     });
-    flush();
+    flushDelta();
+    if (NO_DELTA || ONLY_SUMMARY) {
+      console.log(`Delta summary: json.delta chunks=${totalJsonDeltaCount} bytes=${totalJsonDeltaBytes}; result.delta chunks=${totalResultDeltaCount} bytes=${totalResultDeltaBytes}`);
+    }
     console.log();
   }
 
