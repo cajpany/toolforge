@@ -8,6 +8,8 @@
     "start": "node --enable-source-maps dist/server/index.js",
     "build": "tsc -p tsconfig.json",
     "demo": "tsx demo/cli.ts",
+    "demo:walkthrough": "tsx demo/walkthrough.ts",
+    "viewer": "tsx demo/artifacts-viewer.ts artifacts",
     "lint": "eslint . --ext .ts",
     "format": "prettier -w .",
     "test": "vitest run",

@@ -9,6 +9,85 @@ Quickstart
 - Dev server: `npm run dev` (http://localhost:3000)
 - Demo CLI: `npm run demo`
 
+## Demo Walkthrough (Terminal)
+
+1) Start the server (new terminal)
+
+```
+npm run dev
+```
+
+2) Run the conformance suite (shows streaming protocol + guarantees)
+
+```
+npm run test:conformance
+# Expected: Summary: 21/21 passed
+```
+
+3) Try a few focused scenarios via curl (SSE)
+
+```
+# Provider fallback (soft minimal result, degraded=true in metrics)
+curl -N -H 'Content-Type: application/json' \
+  -d '{"mode":"provider_fallback_test"}' \
+  http://localhost:3000/v1/stream
+
+# JSON repair path (invalid result repaired to minimal AssistantReply)
+curl -N -H 'Content-Type: application/json' \
+  -d '{"mode":"repair_test"}' \
+  http://localhost:3000/v1/stream
+
+# Deep complex streaming (union/enum + deltas)
+curl -N -H 'Content-Type: application/json' \
+  -d '{"mode":"deep_combo_test"}' \
+  http://localhost:3000/v1/stream
+```
+
+4) Inspect artifacts (prompt, frames, metrics, result)
+
+```
+ls -lah artifacts
+cat artifacts/metrics.json | jq .
+```
+
+## Artifacts Viewer (CLI)
+
+Run a small terminal viewer to pretty-print the latest run timeline and summaries. You can pass a custom directory; defaults to `artifacts/`.
+
+```
+# Using npm script
+npm run viewer
+
+# Or directly
+npx tsx demo/artifacts-viewer.ts artifacts
+```
+
+Example output (varies by run):
+
+```
+Artifact Viewer: artifacts
+
+Prompt:
+{ "request": { ... }, "model": "gpt-oss-20b", ... }
+
+Timeline:
+[+    0ms] json.begin  schema=Action
+[+   20ms] json.delta  chunk_len=34
+[+   40ms] json.end    length=1
+[+  120ms] tool.call   name=places.search
+[+  350ms] tool.result name=places.search
+[+  420ms] result.begin  schema=AssistantReply
+[+  500ms] result.delta  chunk_len=64
+[+  540ms] result.end    length=1
+[+  540ms] done
+
+Final Result:
+{ "answer": "Found 2 places...", "citations": [] }
+
+Metrics:
+{ "totalMs": 612, "validation": { ... }, "degraded": false }
+```
+
 Artifacts
 - Per run, see `artifacts/` for frames, prompts, results, tool logs, and metrics.
 
