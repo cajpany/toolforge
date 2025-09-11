@@ -1,6 +1,6 @@
 # ToolForge
 
-Production-grade, streaming function-calling for gpt-oss with partial-JSON frames, mid-stream tool execution, and automatic JSON repair.
+Make AI answers reliable and actionable. ToolForge structures model output into small, checkable pieces, auto-fixes small mistakes once, runs real tools mid-stream, keeps runs predictable (seed/temperature), and logs everything for replay.
 
 See `requirements.md` for the full MVP scope and phase-wise plan.
 
@@ -8,6 +8,16 @@ Quickstart
 - Install deps: `npm i`
 - Dev server: `npm run dev` (http://localhost:3000)
 - Demo CLI: `npm run demo`
+
+## Automated Walkthrough (one command)
+
+Run a provider-only, judge-friendly demo that prints short Problem → Solution notes and compact summaries for each section.
+
+```
+npm run demo:walkthrough
+# Shows provider demo, provider tools (orchestration, retry+idempotency, timeout),
+# a compact artifacts summary, and the conformance suite summary.
+```
 
 ## Demo Walkthrough (Terminal)
 
@@ -59,7 +69,7 @@ Run a small terminal viewer to pretty-print the latest run timeline and summarie
 npm run viewer
 
 # Or directly
-npx tsx demo/artifacts-viewer.ts artifacts
+npx tsx demo/artifacts-viewer.ts artifacts --no-delta --compact
 ```
 
 Example output (varies by run):
@@ -148,13 +158,39 @@ curl -N -H 'Content-Type: application/json' \
 
 ## Conformance
 
-Run the seed harness (8/8 passing):
+Proof it works (21 checks):
 
 ```
 npm run test:conformance
+# Expected: Summary: 21/21 passed
 ```
 
-Includes: retry, timeout, backpressure, repair, interruption, idempotency, silence (frame timeout).
+Problem: It's hard to trust a demo without proof.
+Solution: We run 21 fast checks to show the stream stays in order, errors are handled (repair/fallback), tools are safe (retry/timeout), and results match the schema — finishing with a green summary.
+
+### What these checks mean (plain English)
+
+- basic_two_tools — Runs two tools in order (search → booking) and returns a sensible final answer.
+- retry_test — If a tool flakes once, we retry and confirm it succeeded on attempt 2.
+- timeout_test — A slow tool times out safely and the final answer explains the timeout.
+- backpressure_test — Lots of tiny updates still arrive smoothly with a single start/end.
+- repair_test — If the model’s answer is invalid JSON, we auto-fix once and mark it degraded.
+- interrupt_test — If the user cancels, we stop mid-stream without sending a final “done”.
+- idempotency_test — Same request + Idempotency-Key returns the same cached tool result (no double work).
+- silence_timeout_test — If nothing arrives for too long, we emit a clear frame timeout error.
+- provider_fallback_test — If the provider produces nothing useful, we return a minimal fallback answer (marked degraded).
+- complex_schema_test — The “ComplexDemo” object streams correctly and the final answer is well-formed.
+- deep_combo_test — The “DeepCombo” object includes all required variants and a proper final answer.
+- complex_late_keys_test — Keys can arrive late (out of order) and still form a correct object.
+- deep_combo_no_flags_test — Optional fields may be absent; we accept valid minimal objects.
+- union_order_test — Even with mixed variants, we keep items in the intended order.
+- sentinel_escape_test — Special markers are correctly escaped so JSON stays valid.
+- deep_combo_many_items_test — Handles many items without breaking structure.
+- complex_enum_validation_test — Validates a specific mode and mixed targets together.
+- complex_schema_repair_test — Auto-fix once for ComplexDemo if the model’s answer is invalid.
+- deep_combo_repair_test — Auto-fix once for DeepCombo if the model’s answer is invalid.
+- deep_combo_nested_matrix_test — Handles nested arrays/objects for deeper structures.
+- deep_combo_massive_strings_test — Handles very long strings without breaking the stream.
 
 ## Troubleshooting
 

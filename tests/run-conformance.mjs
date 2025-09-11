@@ -370,6 +370,31 @@ async function case_provider_fallback_test() {
   return { pass: true };
 }
 
+// Friendly explanations for each case name
+const EXPLAIN = {
+  basic_two_tools: 'two tools in order (search → booking), sensible final answer',
+  retry_test: 'retry once on flaky tool, succeeds on attempt 2',
+  timeout_test: 'slow tool times out safely, final answer explains it',
+  backpressure_test: 'many tiny updates handled smoothly (single begin/end)',
+  repair_test: 'invalid JSON auto-fixed once; marked degraded',
+  interrupt_test: 'client abort stops stream; no final done',
+  idempotency_test: 'same request + Idempotency-Key reuses cached result',
+  silence_timeout_test: 'no frames triggers clear frame_timeout error',
+  provider_fallback_test: 'no provider result → minimal fallback (degraded)',
+  complex_schema_test: 'ComplexDemo streams correctly; well-formed answer',
+  deep_combo_test: 'DeepCombo includes required variants; proper answer',
+  complex_late_keys_test: 'late-arriving keys still form a correct object',
+  deep_combo_no_flags_test: 'optional fields may be absent; still valid',
+  union_order_test: 'mixed variants appear in intended order',
+  sentinel_escape_test: 'special markers escaped; JSON stays valid',
+  deep_combo_many_items_test: 'handles many items without breaking structure',
+  complex_enum_validation_test: 'validates a specific mode with mixed targets',
+  complex_schema_repair_test: 'auto-fix once for ComplexDemo invalid answer',
+  deep_combo_repair_test: 'auto-fix once for DeepCombo invalid answer',
+  deep_combo_nested_matrix_test: 'nested arrays/objects handled correctly',
+  deep_combo_massive_strings_test: 'very long strings handled without breakage',
+};
+
 async function main() {
   const cases = [
     { name: 'basic_two_tools', fn: case_basic_two_tools },
@@ -399,7 +424,8 @@ async function main() {
     try {
       const res = await c.fn();
       pass++;
-      console.log(`[PASS] ${c.name}`, res || '');
+      const why = EXPLAIN[c.name] ? ` — ${EXPLAIN[c.name]}` : '';
+      console.log(`[PASS] ${c.name}${why}`, res || '');
     } catch (err) {
       console.error(`[FAIL] ${c.name}:`, err?.message || err);
     }

@@ -204,8 +204,8 @@ async function run() {
 
   // Intro narrative
   console.log('\nToolForge: production-grade streaming function-calling for gpt-oss');
-  console.log('- Problem: brittle JSON + tool orchestration in LLM streams');
-  console.log('- Our solution: partial-JSON framing, single-repair fallback, mid-stream tools, determinism, and artifacts.');
+  console.log('- Problem: AI answers can be messy, and models can’t actually do tasks.');
+  console.log('- Solution: ToolForge makes answers reliable and actionable — we structure the stream, auto-fix small mistakes once, run real tools, keep runs predictable, and log everything.');
   // Provider preflight
   const groqBase = process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1';
   const modelId = process.env.MODEL_ID || 'gpt-oss-20b';
@@ -234,7 +234,7 @@ async function run() {
   }
 
   await section('Provider demo (pure provider)',
-    'Streams tokens from the provider using deterministic config (temperature, seed, max_tokens) and sentinel framing.',
+    'Problem: Raw model output can be messy or out of order — hard to trust.\nSolution: ToolForge streams in small, checkable pieces and auto-corrects once if needed. Everything is logged for replay, with predictable settings (seed, temperature).',
     async () => {
     const s = await readSSE('/v1/stream', { mode: 'provider_demo', prompt: 'Follow the sentinel instructions. Emit a short AssistantReply after demonstrating JSON framing.' });
     const metrics = readMetrics();
@@ -242,7 +242,7 @@ async function run() {
   });
 
   await section('Provider tools (places.search → bookings.create)',
-    'Orchestrates mid-stream tools with the provider: pause → execute local tool → resume and finalize AssistantReply.',
+    'Problem: Models “talk about” actions but don’t actually do them; wiring tools is fragile.\nSolution: ToolForge pauses the model, runs real tools, resumes with the results, and returns a clean final answer.',
     async () => {
     const s = await readSSE('/v1/stream', { mode: 'provider_tools_demo', prompt: 'First emit an Action object. Then call places.search with {"query":"pizza","radius_km":3}. If any place is open, call bookings.create with {"place_id":"p1","time":"19:00","party_size":2}. Finally return AssistantReply.' });
     const metrics = readMetrics();
@@ -250,7 +250,7 @@ async function run() {
   });
 
   await section('Provider tools (retry + idempotency with test.failOnce)',
-    'Demonstrates automatic retry on a failing tool and idempotent re-run using the same Idempotency-Key header across two requests.',
+    'Problem: Flaky tools and duplicate clicks lead to inconsistent or double actions.\nSolution: ToolForge retries once automatically and de-duplicates work with an Idempotency-Key — no double booking.',
     async () => {
     const key = 'WALK-IDEMP-1';
     const prompt = 'Call test.failOnce with {"key":"idem-walk-1"} then return an AssistantReply summarizing the attempt number.';
@@ -263,7 +263,7 @@ async function run() {
   });
 
   await section('Provider tools (timeout handling)',
-    'Instructs the provider to call test.sleep with ms > TOOL_TIMEOUT_MS and shows graceful timeout handling in the final AssistantReply.',
+    'Problem: Slow tools can stall the demo.\nSolution: ToolForge sets strict time limits, emits a clear timeout result, and gracefully explains it in the final answer — the stream stays responsive.',
     async () => {
     const ms = Number(process.env.TOOL_TIMEOUT_MS ?? 8000) + 1000;
     const prompt = `Call test.sleep with {"ms":${ms}} then acknowledge the timeout in an AssistantReply.`;
@@ -286,8 +286,32 @@ async function run() {
     });
 
   await section('Conformance suite (summary)',
-    'Runs 21 targeted cases to validate event ordering, repair behavior, provider fallback, backpressure, timeouts, idempotency, and schema conformance.',
+    'Problem: It’s hard to trust a demo without proof.\nSolution: We run 21 fast checks to show the stream stays in order, errors are handled (repair/fallback), tools are safe (retry/timeout), and results match the schema — finishing with a green summary.',
     async () => {
+    // Judge-friendly explanations of each check
+    console.log('What this verifies (plain English):');
+    console.log('- basic_two_tools — Runs two tools in order (search → booking) and returns a sensible final answer.');
+    console.log('- retry_test — If a tool flakes once, we retry and confirm it succeeded on attempt 2.');
+    console.log('- timeout_test — A slow tool times out safely and the final answer explains the timeout.');
+    console.log('- backpressure_test — Lots of tiny updates still arrive smoothly with a single start/end.');
+    console.log('- repair_test — If the model’s answer is invalid JSON, we auto-fix once and mark it degraded.');
+    console.log('- interrupt_test — If the user cancels, we stop mid-stream without sending a final “done”.');
+    console.log('- idempotency_test — Same request + Idempotency-Key returns the same cached tool result (no double work).');
+    console.log('- silence_timeout_test — If nothing arrives for too long, we emit a clear frame timeout error.');
+    console.log('- provider_fallback_test — If the provider produces nothing useful, we return a minimal fallback answer (marked degraded).');
+    console.log('- complex_schema_test — The “ComplexDemo” object streams correctly and the final answer is well-formed.');
+    console.log('- deep_combo_test — The “DeepCombo” object includes all required variants and a proper final answer.');
+    console.log('- complex_late_keys_test — Keys can arrive late (out of order) and still form a correct object.');
+    console.log('- deep_combo_no_flags_test — Optional fields may be absent; we accept valid minimal objects.');
+    console.log('- union_order_test — Even with mixed variants, we keep items in the intended order.');
+    console.log('- sentinel_escape_test — Special markers are correctly escaped so JSON stays valid.');
+    console.log('- deep_combo_many_items_test — Handles many items without breaking structure.');
+    console.log('- complex_enum_validation_test — Validates a specific mode and mixed targets together.');
+    console.log('- complex_schema_repair_test — Auto-fix once for ComplexDemo if the model’s answer is invalid.');
+    console.log('- deep_combo_repair_test — Auto-fix once for DeepCombo if the model’s answer is invalid.');
+    console.log('- deep_combo_nested_matrix_test — Handles nested arrays/objects for deeper structures.');
+    console.log('- deep_combo_massive_strings_test — Handles very long strings without breaking the stream.');
+
     await new Promise<void>((resolve, reject) => {
       const proc = spawn('node', ['tests/run-conformance.mjs'], { stdio: 'inherit' });
       proc.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`conformance exit ${code}`)));
