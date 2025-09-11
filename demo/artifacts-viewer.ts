@@ -91,6 +91,19 @@ function main() {
   } else {
     console.log('Timeline:');
     let t0 = 0;
+    let prevKey = '';
+    let firstDt = 0;
+    let count = 0;
+    let prevRendered = '';
+    function flush() {
+      if (!prevKey) return;
+      if (count > 1) console.log(`${prevRendered} × ${count}`);
+      else console.log(prevRendered);
+      prevKey = '';
+      firstDt = 0;
+      count = 0;
+      prevRendered = '';
+    }
     lines.forEach((line, i) => {
       try {
         const rec = JSON.parse(line);
@@ -99,9 +112,19 @@ function main() {
         const event = rec.event;
         const data = rec.data;
         const sum = summarize(event, data);
-        console.log(`[+${pad(dt)}ms] ${event}${sum ? '  ' + sum : ''}`);
+        const key = `${event}|${sum}`;
+        if (key === prevKey) {
+          count++;
+        } else {
+          flush();
+          prevKey = key;
+          firstDt = dt;
+          count = 1;
+          prevRendered = `[+${pad(firstDt)}ms] ${event}${sum ? '  ' + sum : ''}`;
+        }
       } catch {}
     });
+    flush();
     console.log();
   }
 

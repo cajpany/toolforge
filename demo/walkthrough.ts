@@ -116,8 +116,9 @@ function summarize(event: string, data: any): string {
   }
 }
 
-async function section(title: string, fn: () => Promise<void>) {
+async function section(title: string, description: string, fn: () => Promise<void>) {
   console.log(`\n\n=== ${title} ===\n`);
+  if (description) console.log(description + '\n');
   await fn();
 }
 
@@ -159,38 +160,54 @@ async function run() {
     console.log('Server already running.');
   }
 
-  await section('Happy path (two tools -> AssistantReply)', async () => {
+  await section('Happy path (two tools -> AssistantReply)',
+    'Demonstrates end-to-end tool orchestration (places.search → bookings.create) with structured AssistantReply frames.',
+    async () => {
     await readSSE('/v1/stream', { prompt: 'Find pizza; book at 7pm' });
   });
 
-  await section('Deep combo streaming (union/enum + deltas)', async () => {
+  await section('Deep combo streaming (union/enum + deltas)',
+    'Streams partial JSON across multiple deltas and shows union/enum handling in the DeepCombo schema.',
+    async () => {
     await readSSE('/v1/stream', { mode: 'deep_combo_test' });
   });
 
-  await section('JSON repair (invalid -> minimal fallback)', async () => {
+  await section('JSON repair (invalid → minimal fallback)',
+    'Emits an invalid AssistantReply and validates single-repair fallback to a minimal valid object with diagnostics.error.',
+    async () => {
     await readSSE('/v1/stream', { mode: 'repair_test' });
   });
 
-  await section('Provider fallback (soft minimal result)', async () => {
+  await section('Provider fallback (soft minimal result)',
+    'Simulates a provider producing no usable result; the server emits a degraded minimal AssistantReply with diagnostics.error=provider_no_result.',
+    async () => {
     await readSSE('/v1/stream', { mode: 'provider_fallback_test' });
   });
 
-  await section('Retry + Idempotency (failOnce -> retry)', async () => {
+  await section('Retry + Idempotency (failOnce → retry)',
+    'Shows automatic retry for a failing tool and idempotency behavior to avoid duplicate work (attempt=2).',
+    async () => {
     await readSSE('/v1/stream', { mode: 'retry_test', testKey: 'walkthrough-1' });
   });
 
-  await section('Timeout handling (tool timeout)', async () => {
+  await section('Timeout handling (tool timeout)',
+    'Executes a long-running tool and demonstrates graceful timeout handling with an acknowledgment in the final result.',
+    async () => {
     await readSSE('/v1/stream', { mode: 'timeout_test' });
   });
 
-  await section('Artifacts viewer (latest run)', async () => {
+  await section('Artifacts viewer (latest run)',
+    'Pretty-prints the frames.ndjson timeline and shows saved prompt, result, and metrics for traceability.',
+    async () => {
     await new Promise<void>((resolve, reject) => {
       const proc = spawn(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'demo/artifacts-viewer.ts', 'artifacts'], { stdio: 'inherit' });
       proc.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`viewer exit ${code}`)));
     });
   });
 
-  await section('Conformance suite (summary)', async () => {
+  await section('Conformance suite (summary)',
+    'Runs 21 targeted cases to validate event ordering, repair behavior, provider fallback, backpressure, timeouts, idempotency, and schema conformance.',
+    async () => {
     await new Promise<void>((resolve, reject) => {
       const proc = spawn('node', ['tests/run-conformance.mjs'], { stdio: 'inherit' });
       proc.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`conformance exit ${code}`)));
